@@ -157,12 +157,13 @@ for b in glob.glob(os.path.join(E, "sdkjs", "*", "sdk-all.bin")) + glob.glob(os.
 log("editors replaced; snapshots removed")
 
 # Hide the Xrero header controls that call Windows-only native commands (PDF->Word converter, Designs dialog,
-# EN/AR relaunch, share, account) - on Mac they would be dead buttons.
+# EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share, account) - on Mac they would be
+# dead buttons. The Mac UI language follows macOS (or the start page's Settings).
 MAC_JS = r"""
 /*XR-MAC-START*/
 (function(){
   if (!/Mac/i.test(navigator.platform || '')) return;
-  var css = '#xr-b-ctx,#xr-lang,#xr-b-share,#xr-b-acct,#xr-acct-menu,#xr-designs-launch,#xr-design-ov{display:none!important}';
+  var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-b-acct,#xr-acct-menu,#xr-designs-launch,#xr-design-ov{display:none!important}';
   function add(){
     if (document.getElementById('xr-mac-css')) return;
     var s = document.createElement('style'); s.id = 'xr-mac-css'; s.textContent = css;

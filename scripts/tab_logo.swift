@@ -56,7 +56,7 @@ func make(original: String, output: String) {
             text.draw(at: NSPoint(x: h + gap, y: ((h - ts.height) / 2).rounded(.down) + 0.5))
         })
     }
-    let tiff = NSBitmapImageRep.tiffRepresentationOfImageReps(reps, using: .lzw, factor: 0)!
+    let tiff = NSBitmapImageRep.tiffRepresentationOfImageReps(in: reps, using: .lzw, factor: 0)!
     try! tiff.write(to: URL(fileURLWithPath: res + output + ".tiff"))
     try? reps[1].representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: diag + "/new-\(output)@2x.png"))
     print("  -> \(output).tiff, font \(font.pointSize) pt, text width \(text.size().width) of \(size.width - h - gap)")

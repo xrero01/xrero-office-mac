@@ -128,8 +128,8 @@ async def main():
             await pg.shot("02-editor-open")
             screencap("02-editor-open")
             hidden = await pg.ev("""(function(){var d=document.querySelector('iframe[name=frameEditor]');d=d&&d.contentDocument||document;
-              var ids=['xr-b-ctx','xr-lang','xr-b-share','xr-b-acct'];var o={};ids.forEach(function(i){var e=d.getElementById(i);
-              o[i]= e? getComputedStyle(e).display : 'absent';});return o;})()""")
+              var sel=['#xr-b-ctx','#xr-hdr-btns .xr-lang','#xr-b-share','#xr-b-acct','#xr-designs-launch'];var o={};sel.forEach(function(q){
+              var e=d.querySelector(q); o[q]= e? getComputedStyle(e).display : 'absent';});return o;})()""")
             ok("windows_only_buttons_hidden", hidden and all(v in ("none", "absent") for v in hidden.values()), json.dumps(hidden))
             vw = await pg.ev("[innerWidth, innerHeight]") or [1200, 800]
             x, y = vw[0] * 0.5, vw[1] * 0.45

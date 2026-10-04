@@ -29,6 +29,11 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 echo "== [$ARCH] rebrand + Xrero web layer"
 python3 "$ROOT/scripts/patch_bundle.py" "$APP" "$PAYLOAD" "$VERSION"
 
+echo "== [$ARCH] first-run launcher"
+clang -arch "$ARCH" -mmacosx-version-min=11.0 -O2 -Wall -Werror -framework CoreFoundation \
+  -o "$APP/Contents/MacOS/Xrero Office" "$ROOT/launcher/launcher.c"
+lipo -info "$APP/Contents/MacOS/Xrero Office" "$APP/Contents/MacOS/XreroOffice"
+
 echo "== [$ARCH] converter JS engine"
 CONV="$APP/Contents/Resources/converter"
 cat "$CONV/DoctRenderer.config" || true

@@ -31,9 +31,10 @@ p["ASCWebappsHelpUrl"] = "https://xrero.com/office/help"
 for k in list(p):
     if k.startswith("NS") and k.endswith("UsageDescription") and isinstance(p[k], str):
         p[k] = p[k].replace("ONLYOFFICE Desktop Editors", NAME).replace("ONLYOFFICE", NAME)
-# Updates: never offer ONLYOFFICE builds. The feed is Xrero's own (an empty appcast = "you're up to date").
-for k in ("SUPublicEDKey", "SUScheduledCheckInterval"):
-    p.pop(k, None)
+# Updates: never offer ONLYOFFICE builds. The feed is Xrero's own (an empty appcast = "you're up to date") and
+# updates must carry an EdDSA signature made with Xrero's key (the private half never leaves Xrero's PC).
+p.pop("SUScheduledCheckInterval", None)
+p["SUPublicEDKey"] = "69Gj4ww/33jDQRAKhj3gP1RbblQ+SIVBCI9cDSdTk7k="
 p["SUFeedURL"] = "https://xrero.com/office/mac/appcast.xml"
 p["SUEnableAutomaticChecks"] = False
 p["SUAllowsAutomaticUpdates"] = False
@@ -41,11 +42,12 @@ p["SUAutomaticallyUpdate"] = False
 # Icon: the compiled asset catalog (Assets.car) carries the ONLYOFFICE icon under CFBundleIconName -> use the .icns
 p.pop("CFBundleIconName", None)
 p["CFBundleIconFile"] = "AppIcon"
-# Executable name = the process name users see (Activity Monitor, force-quit list)
+# CFBundleExecutable "Xrero Office" = launcher/launcher.c (built by build_mac.sh): seeds the first-run
+# preferences, then execs the real binary, renamed to XreroOffice (the process name in ps / crash reports).
 p["CFBundleExecutable"] = NAME
-os.rename(os.path.join(C, "MacOS", old_exe), os.path.join(C, "MacOS", NAME))
+os.rename(os.path.join(C, "MacOS", old_exe), os.path.join(C, "MacOS", "XreroOffice"))
 plistlib.dump(p, open(pl_path, "wb"), fmt=plistlib.FMT_XML)
-log("Info.plist:", p["CFBundleName"], p["CFBundleIdentifier"], p["CFBundleShortVersionString"], "exe:", old_exe, "->", NAME)
+log("Info.plist:", p["CFBundleName"], p["CFBundleIdentifier"], p["CFBundleShortVersionString"], "exe:", old_exe, "-> XreroOffice")
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)
 VALUE = re.compile(r'(=\s*")((?:[^"\\]|\\.)*)(")')

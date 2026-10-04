@@ -3,12 +3,12 @@
 Launches the real app (DevTools port 9222), screenshots the start page, opens a document, types English + Arabic,
 presses Enter / Cmd+B / Cmd+S, verifies the text and the saved file, checks the Windows-only header buttons are
 hidden and the start page has no sign-in wall / ONLYOFFICE text. Writes <out>/ui-<arch>.json + PNGs."""
-import asyncio, base64, json, os, shutil, subprocess, sys, time
+import asyncio, base64, json, os, plistlib, shutil, subprocess, sys, time
 import aiohttp
 
 APP, ARCH, TDIR, OUT = sys.argv[1:5]
 APP, TDIR, OUT = os.path.abspath(APP), os.path.abspath(TDIR), os.path.abspath(OUT)
-EXE = os.path.join(APP, "Contents", "MacOS", "Xrero Office")
+EXE = os.path.join(APP, "Contents", "MacOS", plistlib.load(open(os.path.join(APP, "Contents", "Info.plist"), "rb"))["CFBundleExecutable"])
 PORT = 9222
 os.makedirs(OUT, exist_ok=True)
 res = {"arch": ARCH, "checks": {}, "shots": []}
@@ -25,6 +25,16 @@ def screencap(name):
 async def targets(s):
     async with s.get("http://127.0.0.1:%d/json" % PORT) as r:
         return await r.json(content_type=None)
+
+def is_start(t):
+    u = t.get("url", "")
+    return t.get("type") == "page" and u.startswith(("file:", "http")) and "/apps/" not in u and "documents/" not in u
+
+def windows():
+    # best effort (needs Accessibility for the runner's shell): every window the app shows, with its subrole
+    r = subprocess.run(["osascript", "-e", 'tell application "System Events" to tell (first process whose bundle identifier is "com.xrero.office") '
+                        'to get {name, subrole} of every window'], capture_output=True, text=True, timeout=20)
+    return (r.stdout or r.stderr).strip()
 
 class Page:
     def __init__(self, ws): self.ws, self.n = ws, 0
@@ -56,20 +66,29 @@ async def main():
     proc = subprocess.Popen(cmd, stdout=open(os.path.join(OUT, "app-%s.log" % ARCH), "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
     async with aiohttp.ClientSession() as s:
-        ts = None
-        for _ in range(90):
+        ts, seen = [], ""
+        for i in range(90):
             await asyncio.sleep(1)
             if proc.poll() is not None: break
             try:
                 ts = await targets(s)
-                if any("index.html" in t.get("url", "") for t in ts): break
-            except Exception: pass
-        ok("app_starts", proc.poll() is None and ts, "pid alive, devtools up after %.0fs" % (time.time() - t0))
-        if not ts:
+            except Exception:
+                continue
+            now = " | ".join("%s %s" % (t.get("type"), t.get("url", "")[-90:]) for t in ts)
+            if now != seen: print("[%2ds] targets: %s" % (i + 1, now or "(none)"), flush=True); seen = now
+            if any(is_start(t) for t in ts): break
+        start = next((t for t in ts if is_start(t)), None)
+        ok("app_starts", proc.poll() is None and start, "start page target after %.0fs: %s" % (time.time() - t0, (start or {}).get("url", "")[-120:]))
+        if not start:
             screencap("01-start-failed"); return
-        await asyncio.sleep(6)
+        await asyncio.sleep(8)
         screencap("01-start")
-        start = next(t for t in ts if "index.html" in t.get("url", "") and "documents" not in t.get("url", ""))
+        # first launch must not greet the user with prompts (Sparkle "check automatically?", etc.)
+        d = subprocess.run(["defaults", "read", "com.xrero.office", "SUEnableAutomaticChecks"], capture_output=True, text=True)
+        ok("first_launch_no_update_prompt", d.stdout.strip() == "0", "SUEnableAutomaticChecks=%r" % d.stdout.strip())
+        w = windows()
+        res["windows_at_start"] = w
+        print("windows:", w, flush=True)
         async with s.ws_connect(start["webSocketDebuggerUrl"], max_msg_size=0) as ws:
             pg = Page(ws)
             await pg.shot("01-start-page")
@@ -86,11 +105,15 @@ async def main():
         old = {t["id"] for t in await targets(s)}
         subprocess.run(["open", "-a", APP, doc])
         ed = None
-        for _ in range(60):
+        seen = ""
+        for i in range(60):
             await asyncio.sleep(1)
-            new = [t for t in await targets(s) if t["id"] not in old and "documents/index.html" in t.get("url", "")]
-            if new: ed = new[0]; break
-        ok("document_opens", ed is not None, "")
+            new = [t for t in await targets(s) if t["id"] not in old and t.get("type") == "page"]
+            now = " | ".join(t.get("url", "")[-90:] for t in new)
+            if now != seen: print("[%2ds] new targets: %s" % (i + 1, now or "(none)"), flush=True); seen = now
+            eds = [t for t in new if "documents/index.html" in t.get("url", "") or "/apps/" in t.get("url", "")]
+            if eds: ed = eds[0]; break
+        ok("document_opens", ed is not None, (ed or {}).get("url", "")[-120:])
         if not ed: screencap("02-open-failed"); return
         await asyncio.sleep(10)
         async with s.ws_connect(ed["webSocketDebuggerUrl"], max_msg_size=0) as ws:

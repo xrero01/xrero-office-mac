@@ -1,0 +1,21 @@
+#!/bin/bash
+# install_from_dmg.sh <dmg>
+# Installs "Xrero Office.app" into /Applications the way a user does (drag it out of the DMG) and resets the
+# app's preferences so the next launch is a true first launch.
+set -euo pipefail
+DMG="$1"
+DEST="/Applications/Xrero Office.app"
+MNT="$(mktemp -d)"
+hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG" >/dev/null
+ls -la "$MNT"
+test -L "$MNT/Applications"                       # the drag-to-install shortcut is in the DMG
+osascript -e 'quit app "Xrero Office"' 2>/dev/null || true
+rm -rf "$DEST" 2>/dev/null || sudo rm -rf "$DEST"
+ditto "$MNT/Xrero Office.app" "$DEST" 2>/dev/null || sudo ditto "$MNT/Xrero Office.app" "$DEST"
+hdiutil detach "$MNT" >/dev/null
+codesign --verify --deep --strict "$DEST"
+/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" -c "Print :CFBundleShortVersionString" "$DEST/Contents/Info.plist"
+lipo -info "$DEST/Contents/MacOS/Xrero Office" "$DEST/Contents/MacOS/XreroOffice"
+defaults delete com.xrero.office 2>/dev/null || true
+rm -rf ~/Library/Preferences/com.xrero.office.plist
+echo "installed $DEST"

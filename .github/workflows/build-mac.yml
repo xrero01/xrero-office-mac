@@ -51,17 +51,21 @@ jobs:
         if: ${{ inputs.intel }}
         run: bash scripts/build_mac.sh x64.dmg x86_64 "$V" payload out
 
+      - name: Install arm64 from its DMG into /Applications (as a user does)
+        run: bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-arm64.dmg"
+
       - name: Test arm64 - Arabic PDF export (bundle's own converter)
-        run: python3 scripts/test_converter.py "out/arm64/Xrero Office.app" arm64 test out/test
+        run: python3 scripts/test_converter.py "/Applications/Xrero Office.app" arm64 test out/test
 
-      - name: Test arm64 - real app (start page, open, type EN/AR, bold, Cmd+S)
-        run: python3 scripts/ui_test.py "out/arm64/Xrero Office.app" arm64 test out/test
+      - name: Test arm64 - real app (first launch, start page, open, type EN/AR, bold, Cmd+S)
+        run: python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test
 
-      - name: Test x86_64 under Rosetta - converter + real app
+      - name: Test x86_64 under Rosetta - install from DMG, converter + real app
         if: ${{ inputs.intel }}
         run: |
-          python3 scripts/test_converter.py "out/x86_64/Xrero Office.app" x86_64 test out/test
-          python3 scripts/ui_test.py "out/x86_64/Xrero Office.app" x86_64 test out/test
+          bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-x86_64.dmg"
+          python3 scripts/test_converter.py "/Applications/Xrero Office.app" x86_64 test out/test
+          python3 scripts/ui_test.py "/Applications/Xrero Office.app" x86_64 test out/test
 
       - name: Publish build + evidence (release, private repo)
         if: ${{ always() }}

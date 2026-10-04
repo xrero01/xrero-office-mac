@@ -1,0 +1,75 @@
+name: build-mac
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Xrero Office version
+        default: "20.0.9"
+      payload:
+        description: release tag holding xrero-payload.zip
+        default: "payload-20.0.9"
+      intel:
+        description: also build the Intel (x86_64) dmg
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-14          # Apple silicon (arm64); the Intel build is tested under Rosetta 2
+    timeout-minutes: 80
+    env:
+      V: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sw_vers; uname -m; df -h / | tail -1
+          softwareupdate --install-rosetta --agree-to-license || true
+          python3 -m pip install --quiet --break-system-packages aiohttp pymupdf pypdfium2 || python3 -m pip install --quiet aiohttp pymupdf pypdfium2
+
+      - name: Official ONLYOFFICE 9.4.0 bundles (pinned SHA-256) + Xrero payload
+        run: |
+          set -e
+          curl -sSL -o arm.dmg https://github.com/ONLYOFFICE/DesktopEditors/releases/download/v9.4.0/ONLYOFFICE-arm.dmg
+          echo "e965be2222609add6b5a70baa2a8cdb599402491fb2925825d9039dcb154beb4  arm.dmg" | shasum -a 256 -c -
+          if [ "${{ inputs.intel }}" = "true" ]; then
+            curl -sSL -o x64.dmg https://github.com/ONLYOFFICE/DesktopEditors/releases/download/v9.4.0/ONLYOFFICE-x86_64.dmg
+            echo "43ac517493c0c316f268ce4b7dc3810b77a7aefe83c0edc1655476d9f21681d2  x64.dmg" | shasum -a 256 -c -
+          fi
+          gh release download "${{ inputs.payload }}" -p xrero-payload.zip -R "$GITHUB_REPOSITORY"
+          mkdir payload && ditto -x -k xrero-payload.zip payload && ls payload payload/editors
+
+      - name: Build arm64
+        run: bash scripts/build_mac.sh arm.dmg arm64 "$V" payload out
+
+      - name: Build x86_64
+        if: ${{ inputs.intel }}
+        run: bash scripts/build_mac.sh x64.dmg x86_64 "$V" payload out
+
+      - name: Test arm64 - Arabic PDF export (bundle's own converter)
+        run: python3 scripts/test_converter.py "out/arm64/Xrero Office.app" arm64 test out/test
+
+      - name: Test arm64 - real app (start page, open, type EN/AR, bold, Cmd+S)
+        run: python3 scripts/ui_test.py "out/arm64/Xrero Office.app" arm64 test out/test
+
+      - name: Test x86_64 under Rosetta - converter + real app
+        if: ${{ inputs.intel }}
+        run: |
+          python3 scripts/test_converter.py "out/x86_64/Xrero Office.app" x86_64 test out/test
+          python3 scripts/ui_test.py "out/x86_64/Xrero Office.app" x86_64 test out/test
+
+      - name: Publish build + evidence (release, private repo)
+        if: ${{ always() }}
+        run: |
+          cd out
+          rm -rf test/fonts-* || true
+          ditto -c -k --keepParent test "test-evidence-$V.zip" || true
+          TAG="mac-$V-r${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" --prerelease --title "Xrero Office $V for macOS (build ${GITHUB_RUN_NUMBER})" \
+            --notes "Built from official ONLYOFFICE 9.4.0 + Xrero payload. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 "test-evidence-$V.zip" 2>/dev/null)

@@ -1,0 +1,5 @@
+out/
+*.dmg
+payload/
+xrero-payload.zip
+__pycache__/

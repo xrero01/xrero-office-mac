@@ -10,6 +10,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DMG_OUT="$OUT/XreroOffice-$VERSION-mac-$ARCH.dmg"
 
 echo "== [$ARCH] notarization ticket for the app"
+rm -f "$APP/Contents/CodeResources"     # any older ticket (e.g. the official bundle's) - re-stapled from Apple below
 if xcrun stapler staple "$APP" 2>/dev/null; then
   echo "already notarized: ticket stapled"
 else
@@ -20,7 +21,7 @@ else
   rm -f "$ZIP"
   xcrun stapler staple "$APP" || exit 1
 fi
-spctl --assess --type execute -vv "$APP" 2>&1 | tee /dev/stderr | grep -q "source=Notarized Developer ID" || exit 1
+spctl --assess --type execute -vv "$APP" 2>&1 | tee /dev/stderr | grep "source=Notarized Developer ID" >/dev/null || exit 1
 
 echo "== [$ARCH] dmg (signed + notarized + stapled)"
 bash "$ROOT/scripts/make_dmg.sh" "$APP" "$DMG_OUT" || exit 1

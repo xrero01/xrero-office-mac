@@ -10,7 +10,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENT="$ROOT/launcher/xrero.entitlements"
 sign() { codesign --force --timestamp --options runtime --sign "$SIGN_ID" "$@"; }
 
-is_macho() { file -b "$1" | grep -q "Mach-O"; }
+is_macho() { file -b "$1" | grep "Mach-O" >/dev/null; }
+
+# 0) the official bundle carries Ascensio's stapled notarization ticket (Contents/CodeResources, outside the code seal):
+#    it belongs to their signature, not ours -> drop it; ours is stapled after Apple notarizes this build
+find "$APP" -path "*/Contents/CodeResources" -not -path "*/_CodeSignature/*" -print -delete
 
 # 1) every loose Mach-O file (dylibs, framework binaries, x2t, helper and main executables)
 while IFS= read -r -d '' f; do

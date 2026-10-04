@@ -56,10 +56,21 @@ fi
 grep -l "XRERO-RTL-CODEPOINTS" "$APP/Contents/Resources/editors/sdkjs/word/sdk-all-min.js"
 grep -l "XRERO-RTL-GRAPHEME" "$APP/Contents/Resources/editors/sdkjs/word/sdk-all.js"
 
-echo "== [$ARCH] sign (ad-hoc) + verify"
-codesign --force --deep --sign - "$APP"
+if [ -n "${SIGN_ID:-}" ]; then
+  echo "== [$ARCH] sign (Developer ID, hardened runtime) + notarize + staple"
+  bash "$ROOT/scripts/sign_mac.sh" "$APP"
+  ZIP="$OUT/$ARCH/notarize-app.zip"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  bash "$ROOT/scripts/notarize.sh" "$ZIP"
+  rm -f "$ZIP"
+  xcrun stapler staple "$APP"
+  spctl --assess --type execute -vv "$APP"
+else
+  echo "== [$ARCH] sign (ad-hoc) + verify"
+  codesign --force --deep --sign - "$APP"
+fi
 codesign --verify --deep --strict --verbose=2 "$APP"
-codesign -dv "$APP" 2>&1 | grep -E "Identifier|Signature|Format" || true
+codesign -dv "$APP" 2>&1 | grep -E "Identifier|Signature|Format|Authority|TeamIdentifier" || true
 
 echo "== [$ARCH] dmg"
 STAGE="$(mktemp -d)"
@@ -68,5 +79,11 @@ ln -s /Applications "$STAGE/Applications"
 DMG_OUT="$OUT/XreroOffice-$VERSION-mac-$ARCH.dmg"
 rm -f "$DMG_OUT"
 hdiutil create -volname "Xrero Office" -srcfolder "$STAGE" -ov -format UDZO "$DMG_OUT" >/dev/null
+if [ -n "${SIGN_ID:-}" ]; then
+  codesign --force --timestamp --sign "$SIGN_ID" "$DMG_OUT"
+  bash "$ROOT/scripts/notarize.sh" "$DMG_OUT"
+  xcrun stapler staple "$DMG_OUT"
+  spctl --assess --type open --context context:primary-signature -vv "$DMG_OUT"
+fi
 ls -la "$DMG_OUT"
 shasum -a 256 "$DMG_OUT" | tee "$DMG_OUT.sha256"

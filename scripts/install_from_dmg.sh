@@ -14,6 +14,12 @@ rm -rf "$DEST" 2>/dev/null || sudo rm -rf "$DEST"
 ditto "$MNT/Xrero Office.app" "$DEST" 2>/dev/null || sudo ditto "$MNT/Xrero Office.app" "$DEST"
 hdiutil detach "$MNT" >/dev/null
 codesign --verify --deep --strict "$DEST"
+# Gatekeeper verdict a downloaded copy gets: signed builds must say "Notarized Developer ID"
+if [ -n "${SIGN_ID:-}" ]; then
+  spctl --assess --type execute -vv "$DEST" 2>&1 | tee /dev/stderr | grep -q "source=Notarized Developer ID"
+else
+  spctl --assess --type execute -vv "$DEST" || true
+fi
 /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" -c "Print :CFBundleShortVersionString" "$DEST/Contents/Info.plist"
 lipo -info "$DEST/Contents/MacOS/Xrero Office" "$DEST/Contents/MacOS/XreroOffice"
 defaults delete com.xrero.office 2>/dev/null || true

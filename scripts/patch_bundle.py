@@ -99,7 +99,9 @@ open(exe, "wb").write(data)
 # varint-length-prefixed: 0x8d = 13, 0x8e = 14 -> same-length names keep the archive valid)
 NIB_SWAPS = [(b"\x8dlogo-tab-dark", b"\x8dxrero-tabdark"), (b"\x8elogo-tab-light", b"\x8exrero-tab-lite")]
 nib_hits = 0
-for nib in glob.glob(os.path.join(RES, "*.lproj", "*.storyboardc", "*.nib")) + glob.glob(os.path.join(RES, "*.lproj", "*.nib")):
+nibs = [os.path.join(d, f) for lp in glob.glob(os.path.join(RES, "*.lproj"))
+        for d, _, fs in os.walk(lp) for f in fs if f.endswith(".nib")]   # some .nib are folders (keyedobjects.nib inside)
+for nib in nibs:
     b = open(nib, "rb").read()
     n = sum(b.count(o) for o, _ in NIB_SWAPS)
     if n:

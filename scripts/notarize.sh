@@ -4,7 +4,7 @@
 set -euo pipefail
 F="$1"
 OUT="$(xcrun notarytool submit "$F" --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
-        --wait --timeout 90m --output-format json)"
+        --wait --timeout 150m --output-format json)"
 echo "$OUT"
 ID="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
 STATUS="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"

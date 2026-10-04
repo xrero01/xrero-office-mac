@@ -19,7 +19,7 @@ permissions:
 jobs:
   mac:
     runs-on: macos-14          # Apple silicon (arm64); the Intel build is tested under Rosetta 2
-    timeout-minutes: 80
+    timeout-minutes: 340       # first notarizations for a new Apple team can take hours
     env:
       V: ${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
@@ -95,7 +95,7 @@ jobs:
           python3 scripts/test_converter.py "/Applications/Xrero Office.app" x86_64 test out/test
           python3 scripts/ui_test.py "/Applications/Xrero Office.app" x86_64 test out/test
 
-      - name: Publish build + evidence (release, private repo)
+      - name: Publish build + evidence (release)
         if: ${{ always() }}
         run: |
           cd out

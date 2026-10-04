@@ -168,6 +168,20 @@ async def main():
         res["windows_about"] = w
         screencap("05-about")
         ok("about_window", "ONLYOFFICE" not in w.upper(), w)
+        # quit the way a user does (Xrero Office > Quit) with the saved document still open
+        t_q = time.time()
+        q = osa('tell application id "com.xrero.office" to quit')
+        await asyncio.sleep(3)
+        screencap("06-quit")
+        wq = windows() if proc.poll() is None else "(exited)"
+        res["windows_after_quit"] = wq
+        for _ in range(30):
+            if proc.poll() is not None: break
+            await asyncio.sleep(1)
+        ok("quits_cleanly", proc.poll() is not None, "reply=%r windows after 3s=%r exited after %.0fs" % (q, wq, time.time() - t_q))
+        appsup = os.path.expanduser("~/Library/Application Support")
+        res["app_support"] = sorted(os.listdir(appsup)) if os.path.isdir(appsup) else []
+        print("Application Support:", res["app_support"], flush=True)
     try:
         subprocess.run(["osascript", "-e", 'quit app "Xrero Office"'], timeout=20)
         time.sleep(5)

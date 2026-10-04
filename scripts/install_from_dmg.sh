@@ -18,4 +18,9 @@ codesign --verify --deep --strict "$DEST"
 lipo -info "$DEST/Contents/MacOS/Xrero Office" "$DEST/Contents/MacOS/XreroOffice"
 defaults delete com.xrero.office 2>/dev/null || true
 rm -rf ~/Library/Preferences/com.xrero.office.plist
+# app data of a previous test run (recent files, recovery copies) -> the next launch is a true first launch
+ls ~/Library/Application\ Support/ || true
+rm -rf ~/Library/Application\ Support/asc.onlyoffice.ONLYOFFICE ~/Library/Application\ Support/ONLYOFFICE \
+       ~/Library/Application\ Support/com.xrero.office ~/Library/Application\ Support/Xrero\ Office \
+       ~/Library/Caches/com.xrero.office ~/Library/Saved\ Application\ State/com.xrero.office.savedState
 echo "installed $DEST"

@@ -30,11 +30,15 @@ def is_start(t):
     u = t.get("url", "")
     return t.get("type") == "page" and u.startswith(("file:", "http")) and "/apps/" not in u and "documents/" not in u
 
-def windows():
-    # best effort (needs Accessibility for the runner's shell): every window the app shows, with its subrole
-    r = subprocess.run(["osascript", "-e", 'tell application "System Events" to tell (first process whose bundle identifier is "com.xrero.office") '
-                        'to get {name, subrole} of every window'], capture_output=True, text=True, timeout=20)
+def osa(*lines):
+    r = subprocess.run(["osascript"] + [a for l in lines for a in ("-e", l)], capture_output=True, text=True, timeout=30)
     return (r.stdout or r.stderr).strip()
+
+PROC = 'tell application "System Events" to tell (first process whose bundle identifier is "com.xrero.office")'
+
+def windows():
+    # needs Accessibility for the runner's shell (granted on GitHub's macOS images): every window, with its subrole
+    return osa(PROC + ' to get {name, subrole} of every window')
 
 class Page:
     def __init__(self, ws): self.ws, self.n = ws, 0
@@ -89,6 +93,9 @@ async def main():
         w = windows()
         res["windows_at_start"] = w
         print("windows:", w, flush=True)
+        osa('tell application id "com.xrero.office" to activate')
+        await asyncio.sleep(2)
+        screencap("01b-start-active")
         async with s.ws_connect(start["webSocketDebuggerUrl"], max_msg_size=0) as ws:
             pg = Page(ws)
             await pg.shot("01-start-page")
@@ -150,6 +157,17 @@ async def main():
             mod = await pg.ev("document.querySelector('iframe[name=frameEditor]').contentWindow.editor.isDocumentModified()")
             ok("save_in_place", os.stat(doc).st_mtime > m0 and mod is False, "mtime changed=%s modified=%s" % (os.stat(doc).st_mtime > m0, mod))
             screencap("04-after-save")
+        # native menus: no ONLYOFFICE anywhere (app menu, File ... Help)
+        menus = osa(PROC + ' to get name of every menu item of menu 1 of every menu bar item of menu bar 1')
+        res["menus"] = menus
+        ok("menus_no_onlyoffice", menus and "ONLYOFFICE" not in menus.upper(), menus[:300])
+        # About window (Xrero Office menu > About Xrero Office)
+        osa('tell application id "com.xrero.office" to activate', PROC + ' to click menu item 1 of menu 1 of menu bar item 2 of menu bar 1')
+        await asyncio.sleep(3)
+        w = windows()
+        res["windows_about"] = w
+        screencap("05-about")
+        ok("about_window", "ONLYOFFICE" not in w.upper(), w)
     try:
         subprocess.run(["osascript", "-e", 'quit app "Xrero Office"'], timeout=20)
         time.sleep(5)

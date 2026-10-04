@@ -46,8 +46,55 @@ p["CFBundleIconFile"] = "AppIcon"
 # preferences, then execs the real binary, renamed to XreroOffice (the process name in ps / crash reports).
 p["CFBundleExecutable"] = NAME
 os.rename(os.path.join(C, "MacOS", old_exe), os.path.join(C, "MacOS", "XreroOffice"))
+# every other user-visible plist string (e.g. Finder "Kind" of the form formats)
+def walk(o):
+    if isinstance(o, dict):
+        return {k: walk(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [walk(v) for v in o]
+    if isinstance(o, str):
+        return o.replace("ONLYOFFICE Desktop Editors", NAME).replace("ONLYOFFICE", NAME)
+    return o
+p = walk(p)
 plistlib.dump(p, open(pl_path, "wb"), fmt=plistlib.FMT_XML)
 log("Info.plist:", p["CFBundleName"], p["CFBundleIdentifier"], p["CFBundleShortVersionString"], "exe:", old_exe, "-> XreroOffice")
+
+# ---------------------------------------------------------------- app binary: same-length string swaps
+# (each string is in __cstring once; CFString literals keep their stored length, so lengths must match exactly)
+def padded(url, n):
+    """url + filler query so the result is exactly n characters"""
+    fill = n - len(url) - len("&x=")
+    if fill < 0:
+        raise SystemExit("replacement too long: " + url)
+    return url + "&x=" + "0" * fill
+
+BIN_SWAPS = [
+    # start-tab logo: the asset catalog's ONLYOFFICE artwork -> Xrero files in Resources (made by tab_logo.swift)
+    (b"logo-tab-light\0", b"xrero-tab-lite\0"),
+    (b"logo-tab-dark\0", b"xrero-tabdark\0"),
+    # no analytics to Google under Xrero's name: an RFC 6761 .invalid host never resolves
+    (b"google-analytics.com", b"xrerooffline.invalid"),
+    (b"https://onlyoffice.com/desktopeditors.aspx\0", None),
+    (b"https://onlyoffice.com/registration.aspx?desktop=true\0", None),
+    (b"http://helpcenter.onlyoffice.com/%@ONLYOFFICE-Editors/index.aspx\0", None),
+]
+TARGET = {
+    b"https://onlyoffice.com/desktopeditors.aspx\0": "https://xrero.com/office?from=mac-app",
+    b"https://onlyoffice.com/registration.aspx?desktop=true\0": "https://xrero.com/office?from=mac-app-signup",
+    b"http://helpcenter.onlyoffice.com/%@ONLYOFFICE-Editors/index.aspx\0": "https://xrero.com/office/help?hl=%@",
+}
+exe = os.path.join(C, "MacOS", "XreroOffice")
+data = open(exe, "rb").read()
+for old, new in BIN_SWAPS:
+    if new is None:
+        new = padded(TARGET[old], len(old) - 1).encode() + b"\0"
+    if len(new) != len(old):
+        raise SystemExit("length mismatch %r" % old)
+    if data.count(old) != 1:
+        raise SystemExit("expected exactly one %r in the binary, found %d" % (old, data.count(old)))
+    data = data.replace(old, new)
+    log("binary:", old.rstrip(b"\0").decode(), "->", new.rstrip(b"\0").decode())
+open(exe, "wb").write(data)
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)
 VALUE = re.compile(r'(=\s*")((?:[^"\\]|\\.)*)(")')

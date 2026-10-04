@@ -168,6 +168,10 @@ async def main():
         res["windows_about"] = w
         screencap("05-about")
         ok("about_window", "ONLYOFFICE" not in w.upper(), w)
+        # close About (it is modal: macOS refuses Quit while a modal window is open, like any Mac app)
+        osa(PROC + ' to click (first button whose subrole is "AXCloseButton") of (first window whose subrole is "AXDialog")')
+        await asyncio.sleep(1.5)
+        res["windows_about_closed"] = windows()
         # quit the way a user does (Xrero Office > Quit) with the saved document still open
         t_q = time.time()
         q = osa('tell application id "com.xrero.office" to quit')

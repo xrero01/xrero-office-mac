@@ -12,6 +12,9 @@ on:
         description: also build the Intel (x86_64) dmg
         type: boolean
         default: true
+      notary_wait:
+        description: how long to wait for Apple notarization per file (pending builds are finished by finalize-mac.yml)
+        default: "20m"
 
 permissions:
   contents: write
@@ -19,9 +22,10 @@ permissions:
 jobs:
   mac:
     runs-on: macos-14          # Apple silicon (arm64); the Intel build is tested under Rosetta 2
-    timeout-minutes: 340       # first notarizations for a new Apple team can take hours
+    timeout-minutes: 200
     env:
       V: ${{ inputs.version }}
+      NOTARY_WAIT: ${{ inputs.notary_wait }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -51,26 +55,7 @@ jobs:
           P8: ${{ secrets.NOTARY_KEY_P8 }}
           KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           ISSUER: ${{ secrets.NOTARY_ISSUER }}
-        run: |
-          if [ -z "$P12" ] || [ -z "$P8" ]; then echo "no signing secrets -> ad-hoc build"; exit 0; fi
-          KC="$RUNNER_TEMP/xrero-sign.keychain-db"; KCPW="$(uuidgen)"
-          security create-keychain -p "$KCPW" "$KC"
-          security set-keychain-settings -lut 21600 "$KC"
-          security unlock-keychain -p "$KCPW" "$KC"
-          echo "$P12" | base64 --decode > "$RUNNER_TEMP/devid.p12"
-          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KC" -A || true
-          security import "$RUNNER_TEMP/devid.p12" -k "$KC" -P "$P12_PW" -A -t cert -f pkcs12
-          rm -f "$RUNNER_TEMP/devid.p12"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPW" "$KC" >/dev/null
-          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
-          security find-identity -v -p codesigning "$KC"
-          ID="$(security find-identity -v -p codesigning "$KC" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')"
-          test -n "$ID"
-          echo "SIGN_ID=$ID" >> "$GITHUB_ENV"
-          printf '%s\n' "$P8" > "$RUNNER_TEMP/AuthKey.p8"
-          { echo "NOTARY_KEY=$RUNNER_TEMP/AuthKey.p8"; echo "NOTARY_KEY_ID=$KEY_ID"; echo "NOTARY_ISSUER=$ISSUER"; } >> "$GITHUB_ENV"
-          xcrun notarytool history --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$KEY_ID" --issuer "$ISSUER" | head -5
+        run: bash scripts/ci_signing_setup.sh
 
       - name: Build arm64
         run: bash scripts/build_mac.sh arm.dmg arm64 "$V" payload out
@@ -102,6 +87,6 @@ jobs:
           rm -rf test/fonts-* || true
           ditto -c -k --keepParent test "test-evidence-$V.zip" || true
           TAG="mac-$V-r${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" --prerelease --title "Xrero Office $V for macOS (build ${GITHUB_RUN_NUMBER})" \
-            --notes "Built from official ONLYOFFICE 9.4.0 + Xrero payload. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 "test-evidence-$V.zip" 2>/dev/null)
+          STATE="notarized"; ls *.notary-pending >/dev/null 2>&1 && STATE="signed, notarization PENDING - not for the website until finalize-mac.yml"
+          [ -n "${SIGN_ID:-}" ] || STATE="ad-hoc signed"
+          gh release create "$TAG" --prerelease --title "Xrero Office $V for macOS (build ${GITHUB_RUN_NUMBER}, $STATE)"             --notes "Built from official ONLYOFFICE 9.4.0 + Xrero payload. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"             -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 *-signed-app.zip *.notary-pending *.notary-id */*.notary-id "test-evidence-$V.zip" 2>/dev/null)

@@ -15,7 +15,11 @@ ditto "$MNT/Xrero Office.app" "$DEST" 2>/dev/null || sudo ditto "$MNT/Xrero Offi
 hdiutil detach "$MNT" >/dev/null
 codesign --verify --deep --strict "$DEST"
 # Gatekeeper verdict a downloaded copy gets: signed builds must say "Notarized Developer ID"
-if [ -n "${SIGN_ID:-}" ]; then
+# (a build whose notarization is still pending at Apple must at least carry the Developer ID signature)
+if [ -n "${SIGN_ID:-}" ] && [ -f "$DMG.notary-pending" ]; then
+  codesign -dv --verbose=2 "$DEST" 2>&1 | tee /dev/stderr | grep -q "Authority=Developer ID Application"
+  spctl --assess --type execute -vv "$DEST" || true
+elif [ -n "${SIGN_ID:-}" ]; then
   spctl --assess --type execute -vv "$DEST" 2>&1 | tee /dev/stderr | grep -q "source=Notarized Developer ID"
 else
   spctl --assess --type execute -vv "$DEST" || true

@@ -1,0 +1,91 @@
+name: finalize-mac
+# Finishes a build-mac release whose notarization was still pending at Apple: takes its Developer-ID-signed app zips,
+# staples Apple's ticket (or notarizes them now), makes signed + notarized + stapled DMGs, installs and tests them like a
+# user (Gatekeeper must say "Notarized Developer ID"), and publishes mac-<version>-notarized-r<run>.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Xrero Office version
+        default: "20.0.9"
+      from:
+        description: build-mac release tag holding XreroOffice-<version>-mac-<arch>-signed-app.zip
+        required: true
+      notary_wait:
+        description: how long to wait for Apple per file
+        default: "150m"
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: macos-14
+    timeout-minutes: 340
+    env:
+      V: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          python3 -m pip install --quiet --break-system-packages aiohttp pymupdf pypdfium2 || python3 -m pip install --quiet aiohttp pymupdf pypdfium2
+
+      - name: Apple Developer ID + notarization key
+        env:
+          P12: ${{ secrets.MAC_CERT_P12_B64 }}
+          P12_PW: ${{ secrets.MAC_CERT_PASSWORD }}
+          P8: ${{ secrets.NOTARY_KEY_P8 }}
+          KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          test -n "$P12" || { echo "signing secrets missing"; exit 1; }
+          bash scripts/ci_signing_setup.sh
+
+      - name: Signed apps from ${{ inputs.from }}
+        run: |
+          set -e
+          gh release download "${{ inputs.from }}" -p "*-signed-app.zip" -R "$GITHUB_REPOSITORY" -D in
+          ls -la in
+          for z in in/*-signed-app.zip; do
+            a="$(basename "$z" | sed -E 's/.*-mac-(arm64|x86_64)-signed-app.zip/\1/')"
+            mkdir -p "out/$a"; ditto -x -k "$z" "out/$a"
+            codesign --verify --deep --strict "out/$a/Xrero Office.app"
+            codesign -dv "out/$a/Xrero Office.app" 2>&1 | grep -E "Authority=Developer ID Application|TeamIdentifier"
+          done
+
+      - name: Notarize + staple apps, signed + notarized DMGs
+        run: |
+          set -e
+          for a in arm64 x86_64; do
+            [ -d "out/$a/Xrero Office.app" ] || continue
+            bash scripts/finalize_mac.sh "out/$a/Xrero Office.app" "$a" "$V" out "${{ inputs.notary_wait }}"
+          done
+          ls -la out
+
+      - name: Test arm64 - install from the DMG like a user (Gatekeeper) + converter + real app
+        run: |
+          bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-arm64.dmg"
+          python3 scripts/test_converter.py "/Applications/Xrero Office.app" arm64 test out/test
+          python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test
+
+      - name: Test x86_64 under Rosetta - same checks
+        if: ${{ hashFiles('out/XreroOffice-*-mac-x86_64.dmg') != '' }}
+        run: |
+          bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-x86_64.dmg"
+          python3 scripts/test_converter.py "/Applications/Xrero Office.app" x86_64 test out/test
+          python3 scripts/ui_test.py "/Applications/Xrero Office.app" x86_64 test out/test
+
+      - name: Publish notarized DMGs + evidence (release)
+        if: ${{ always() }}
+        run: |
+          cd out
+          rm -rf test/fonts-* || true
+          ditto -c -k --keepParent test "test-evidence-$V.zip" || true
+          ls *.dmg >/dev/null 2>&1 || exit 0
+          gh release create "mac-$V-notarized-r${GITHUB_RUN_NUMBER}" --prerelease \
+            --title "Xrero Office $V for macOS (notarized, finalize ${GITHUB_RUN_NUMBER})" \
+            --notes "From ${{ inputs.from }}. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 "test-evidence-$V.zip" 2>/dev/null)

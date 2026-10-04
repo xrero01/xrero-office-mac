@@ -56,34 +56,28 @@ fi
 grep -l "XRERO-RTL-CODEPOINTS" "$APP/Contents/Resources/editors/sdkjs/word/sdk-all-min.js"
 grep -l "XRERO-RTL-GRAPHEME" "$APP/Contents/Resources/editors/sdkjs/word/sdk-all.js"
 
+DMG_OUT="$OUT/XreroOffice-$VERSION-mac-$ARCH.dmg"
 if [ -n "${SIGN_ID:-}" ]; then
-  echo "== [$ARCH] sign (Developer ID, hardened runtime) + notarize + staple"
+  echo "== [$ARCH] sign (Developer ID, hardened runtime)"
   bash "$ROOT/scripts/sign_mac.sh" "$APP"
-  ZIP="$OUT/$ARCH/notarize-app.zip"
-  ditto -c -k --keepParent "$APP" "$ZIP"
-  bash "$ROOT/scripts/notarize.sh" "$ZIP"
-  rm -f "$ZIP"
-  xcrun stapler staple "$APP"
-  spctl --assess --type execute -vv "$APP"
+  codesign --verify --deep --strict --verbose=2 "$APP"
+  # the signed app is kept (release asset) so finalize-mac.yml can notarize/staple it later if Apple is slow today
+  ditto -c -k --keepParent "$APP" "$OUT/XreroOffice-$VERSION-mac-$ARCH-signed-app.zip"
+  set +e; bash "$ROOT/scripts/finalize_mac.sh" "$APP" "$ARCH" "$VERSION" "$OUT" "${NOTARY_WAIT:-150m}"; rc=$?; set -e
+  if [ $rc -eq 2 ]; then
+    echo "== [$ARCH] Apple is still notarizing -> test DMG with the signed (not yet notarized) app; NOT for the website"
+    bash "$ROOT/scripts/make_dmg.sh" "$APP" "$DMG_OUT"
+    echo "signed, notarization pending - run finalize-mac.yml on this release" > "$DMG_OUT.notary-pending"
+    shasum -a 256 "$DMG_OUT" | tee "$DMG_OUT.sha256"
+  elif [ $rc -ne 0 ]; then
+    exit $rc
+  fi
 else
   echo "== [$ARCH] sign (ad-hoc) + verify"
   codesign --force --deep --sign - "$APP"
+  codesign --verify --deep --strict --verbose=2 "$APP"
+  echo "== [$ARCH] dmg"
+  bash "$ROOT/scripts/make_dmg.sh" "$APP" "$DMG_OUT"
+  shasum -a 256 "$DMG_OUT" | tee "$DMG_OUT.sha256"
 fi
-codesign --verify --deep --strict --verbose=2 "$APP"
 codesign -dv "$APP" 2>&1 | grep -E "Identifier|Signature|Format|Authority|TeamIdentifier" || true
-
-echo "== [$ARCH] dmg"
-STAGE="$(mktemp -d)"
-ditto "$APP" "$STAGE/Xrero Office.app"
-ln -s /Applications "$STAGE/Applications"
-DMG_OUT="$OUT/XreroOffice-$VERSION-mac-$ARCH.dmg"
-rm -f "$DMG_OUT"
-hdiutil create -volname "Xrero Office" -srcfolder "$STAGE" -ov -format UDZO "$DMG_OUT" >/dev/null
-if [ -n "${SIGN_ID:-}" ]; then
-  codesign --force --timestamp --sign "$SIGN_ID" "$DMG_OUT"
-  bash "$ROOT/scripts/notarize.sh" "$DMG_OUT"
-  xcrun stapler staple "$DMG_OUT"
-  spctl --assess --type open --context context:primary-signature -vv "$DMG_OUT"
-fi
-ls -la "$DMG_OUT"
-shasum -a 256 "$DMG_OUT" | tee "$DMG_OUT.sha256"

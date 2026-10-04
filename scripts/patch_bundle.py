@@ -95,6 +95,21 @@ for old, new in BIN_SWAPS:
     data = data.replace(old, new)
     log("binary:", old.rstrip(b"\0").decode(), "->", new.rstrip(b"\0").decode())
 open(exe, "wb").write(data)
+# the start tab's first paint comes from the storyboard, which names the same artwork (NIBArchive strings are
+# varint-length-prefixed: 0x8d = 13, 0x8e = 14 -> same-length names keep the archive valid)
+NIB_SWAPS = [(b"\x8dlogo-tab-dark", b"\x8dxrero-tabdark"), (b"\x8elogo-tab-light", b"\x8exrero-tab-lite")]
+nib_hits = 0
+for nib in glob.glob(os.path.join(RES, "*.lproj", "*.storyboardc", "*.nib")) + glob.glob(os.path.join(RES, "*.lproj", "*.nib")):
+    b = open(nib, "rb").read()
+    n = sum(b.count(o) for o, _ in NIB_SWAPS)
+    if n:
+        for o, nw in NIB_SWAPS:
+            b = b.replace(o, nw)
+        open(nib, "wb").write(b)
+        nib_hits += n
+        log("storyboard logo:", os.path.relpath(nib, RES), n)
+if nib_hits == 0:
+    raise SystemExit("storyboard tab logo reference not found")
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)
 VALUE = re.compile(r'(=\s*")((?:[^"\\]|\\.)*)(")')

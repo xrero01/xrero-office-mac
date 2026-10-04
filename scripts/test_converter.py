@@ -7,6 +7,7 @@ import pymupdf as fitz
 import pypdfium2 as pdfium
 
 APP, ARCH, TDIR, OUT = sys.argv[1:5]
+APP, TDIR, OUT = os.path.abspath(APP), os.path.abspath(TDIR), os.path.abspath(OUT)
 CONV = os.path.join(APP, "Contents", "Resources", "converter")
 X2T = os.path.join(CONV, "x2t")
 RUN = ["arch", "-x86_64"] if ARCH == "x86_64" else []

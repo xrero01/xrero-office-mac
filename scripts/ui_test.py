@@ -7,6 +7,7 @@ import asyncio, base64, json, os, shutil, subprocess, sys, time
 import aiohttp
 
 APP, ARCH, TDIR, OUT = sys.argv[1:5]
+APP, TDIR, OUT = os.path.abspath(APP), os.path.abspath(TDIR), os.path.abspath(OUT)
 EXE = os.path.join(APP, "Contents", "MacOS", "Xrero Office")
 PORT = 9222
 os.makedirs(OUT, exist_ok=True)

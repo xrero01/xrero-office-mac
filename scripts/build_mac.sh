@@ -29,12 +29,20 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 echo "== [$ARCH] rebrand + Xrero web layer"
 python3 "$ROOT/scripts/patch_bundle.py" "$APP" "$PAYLOAD" "$VERSION"
 
-echo "== [$ARCH] converter V8 snapshots (Arabic PDF fix lives in the JS they are built from)"
+echo "== [$ARCH] converter JS engine"
 CONV="$APP/Contents/Resources/converter"
 cat "$CONV/DoctRenderer.config" || true
-RUN=""; [ "$ARCH" = "x86_64" ] && RUN="arch -x86_64"
-(cd "$CONV" && $RUN ./x2t -create-js-snapshots)
-ls -la "$APP/Contents/Resources/editors/sdkjs/"*/sdk-all.bin
+# The macOS converter is a JavaScriptCore build (small doctrenderer, as ONLYOFFICE's build_tools treat it):
+# it has no V8 snapshots and loads sdk-all*.js directly, so the patched JS is what it runs. A V8 build
+# (doctrenderer > 5 MB) would need its snapshots regenerated.
+DR="$CONV/doctrenderer.framework/Versions/A/doctrenderer"
+if [ -f "$DR" ] && [ "$(stat -f %z "$DR")" -gt 5242880 ]; then
+  RUN=""; [ "$ARCH" = "x86_64" ] && RUN="arch -x86_64"
+  (cd "$CONV" && $RUN ./x2t -create-js-snapshots)
+  ls -la "$APP/Contents/Resources/editors/sdkjs/"*/sdk-all.bin
+else
+  echo "JavaScriptCore converter ($(stat -f %z "$DR") bytes): no snapshots to build"
+fi
 grep -l "XRERO-RTL-CODEPOINTS" "$APP/Contents/Resources/editors/sdkjs/word/sdk-all-min.js"
 grep -l "XRERO-RTL-GRAPHEME" "$APP/Contents/Resources/editors/sdkjs/word/sdk-all.js"
 

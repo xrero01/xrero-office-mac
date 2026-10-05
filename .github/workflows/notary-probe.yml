@@ -1,0 +1,42 @@
+name: notary-probe
+# Is Apple notarization working for this team at all? Signs a tiny command-line program with the Developer ID
+# (hardened runtime + timestamp) and notarizes it. Minutes = the account is fine (big submissions are just slow);
+# stuck "In Progress" = the team's notarization is on hold at Apple (contact Developer Support).
+on:
+  workflow_dispatch:
+    inputs:
+      wait:
+        description: how long to wait for Apple
+        default: "45m"
+
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apple Developer ID + notarization key
+        env:
+          P12: ${{ secrets.MAC_CERT_P12_B64 }}
+          P12_PW: ${{ secrets.MAC_CERT_PASSWORD }}
+          P8: ${{ secrets.NOTARY_KEY_P8 }}
+          KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: bash scripts/ci_signing_setup.sh
+
+      - name: Tiny signed program -> notarize
+        run: |
+          set -e
+          mkdir -p probe
+          printf '#include <stdio.h>\nint main(void){puts("xrero notary probe");return 0;}\n' > probe/hello.c
+          clang -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -O2 -o probe/xrero-notary-probe probe/hello.c
+          codesign --force --timestamp --options runtime --sign "$SIGN_ID" probe/xrero-notary-probe
+          codesign -dv --verbose=2 probe/xrero-notary-probe 2>&1 | grep -E "Authority|Timestamp|flags"
+          ditto -c -k --keepParent probe/xrero-notary-probe probe.zip
+          ls -la probe.zip
+          set +e
+          bash scripts/notarize.sh probe.zip "${{ inputs.wait }}"; rc=$?
+          echo "probe result: rc=$rc (0 accepted, 2 still in progress, 1 rejected)"
+          xcrun notarytool history --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" | head -12
+          exit $rc

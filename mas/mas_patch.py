@@ -27,6 +27,17 @@ p["CFBundleVersion"] = str(BUILD)
 p["ITSAppUsesNonExemptEncryption"] = False
 p["LSApplicationCategoryType"] = "public.app-category.productivity"
 p.setdefault("LSMinimumSystemVersion", "11.0")
+# The website build starts through a tiny launcher (launcher/launcher.c) that only seeds the Sparkle first-run
+# preference and then execv()s XreroOffice. Under the App Sandbox the exec'd binary re-runs sandbox initialisation
+# with ITS OWN code identity (no bundle Info.plist) and is killed ("Unable to get bundle identifier for container").
+# No Sparkle here -> no launcher: XreroOffice is the bundle's main executable again.
+launcher = os.path.join(C, "MacOS", p["CFBundleExecutable"])
+real = os.path.join(C, "MacOS", "XreroOffice")
+if p["CFBundleExecutable"] != "XreroOffice" and os.path.isfile(real):
+    if os.path.isfile(launcher):
+        os.remove(launcher)
+    p["CFBundleExecutable"] = "XreroOffice"
+    log("launcher removed; CFBundleExecutable = XreroOffice")
 plistlib.dump(p, open(pl, "wb"), fmt=plistlib.FMT_XML)
 log("Info.plist", p["CFBundleIdentifier"], p["CFBundleShortVersionString"], "build", p["CFBundleVersion"],
     "SU keys left:", [k for k in p if k.startswith("SU")])

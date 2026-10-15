@@ -1,0 +1,102 @@
+name: notary-run
+# Website (Developer ID) build: finishes the notarization of release mac-20.0.9-r13 (signed 4 Oct, notarization was
+# still "In Progress"). Shows Apple's notarization history and the status of the two old submissions, then runs the
+# same steps as finalize-mac.yml (staple if Apple accepted them meanwhile, or notarize again), tests the DMGs like a
+# user and publishes mac-20.0.9-notarized-r<run>. Logs always go to a release (notary-logs-r<run>).
+on:
+  push:
+    branches: [notary]
+
+permissions:
+  contents: write
+
+jobs:
+  notarize:
+    runs-on: macos-14
+    timeout-minutes: 340
+    env:
+      V: "20.0.9"
+      FROM: "mac-20.0.9-r13"
+      WAIT: "150m"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          mkdir -p out/logs
+          softwareupdate --install-rosetta --agree-to-license || true
+          python3 -m pip install --quiet --break-system-packages aiohttp pymupdf pypdfium2 || python3 -m pip install --quiet aiohttp pymupdf pypdfium2
+
+      - name: Apple Developer ID + notarization key
+        env:
+          P12: ${{ secrets.MAC_CERT_P12_B64 }}
+          P12_PW: ${{ secrets.MAC_CERT_PASSWORD }}
+          P8: ${{ secrets.NOTARY_KEY_P8 }}
+          KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          test -n "$P12" || { echo "signing secrets missing"; exit 1; }
+          bash scripts/ci_signing_setup.sh 2>&1 | tee out/logs/01-signing.log
+
+      - name: Apple notarization history + the two old submissions
+        run: |
+          set +e
+          xcrun notarytool history --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" 2>&1 | head -40 | tee out/logs/02-history.log
+          gh release download "$FROM" -p "*.notary-id" -R "$GITHUB_REPOSITORY" -D ids
+          for f in ids/*.notary-id; do
+            id="$(cat "$f")"; echo "== $f $id" | tee -a out/logs/02-history.log
+            xcrun notarytool info "$id" --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" 2>&1 | tee -a out/logs/02-history.log
+            xcrun notarytool log "$id" --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" 2>&1 | head -60 | tee -a out/logs/02-history.log
+          done
+          exit 0
+
+      - name: Signed apps from mac-20.0.9-r13
+        run: |
+          set -e
+          gh release download "$FROM" -p "*-signed-app.zip" -R "$GITHUB_REPOSITORY" -D in
+          for z in in/*-signed-app.zip; do
+            a="$(basename "$z" | sed -E 's/.*-mac-(arm64|x86_64)-signed-app.zip/\1/')"
+            mkdir -p "out/$a"; ditto -x -k "$z" "out/$a"
+            codesign --verify --deep --strict "out/$a/Xrero Office.app"
+            codesign -dv "out/$a/Xrero Office.app" 2>&1 | grep -E "Authority=Developer ID Application|TeamIdentifier"
+          done
+
+      - name: Notarize + staple apps, signed + notarized DMGs
+        run: |
+          set -o pipefail
+          for a in arm64 x86_64; do
+            [ -d "out/$a/Xrero Office.app" ] || continue
+            bash scripts/finalize_mac.sh "out/$a/Xrero Office.app" "$a" "$V" out "$WAIT" 2>&1 | tee "out/logs/03-finalize-$a.log"
+          done
+          ls -la out
+
+      - name: Test arm64 - install from the DMG like a user (Gatekeeper) + converter + real app
+        run: |
+          set -o pipefail
+          { bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-arm64.dmg"
+            python3 scripts/test_converter.py "/Applications/Xrero Office.app" arm64 test out/test
+            python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test; } 2>&1 | tee out/logs/04-test-arm64.log
+
+      - name: Test x86_64 under Rosetta - same checks
+        if: ${{ hashFiles('out/XreroOffice-*-mac-x86_64.dmg') != '' }}
+        run: |
+          set -o pipefail
+          { bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-x86_64.dmg"
+            python3 scripts/test_converter.py "/Applications/Xrero Office.app" x86_64 test out/test
+            python3 scripts/ui_test.py "/Applications/Xrero Office.app" x86_64 test out/test; } 2>&1 | tee out/logs/05-test-x86_64.log
+
+      - name: Publish logs + notarized DMGs (releases)
+        if: ${{ always() }}
+        run: |
+          cd out
+          ditto -c -k --keepParent logs "notary-logs-${GITHUB_RUN_NUMBER}.zip" || true
+          gh release create "notary-logs-r${GITHUB_RUN_NUMBER}" --prerelease --title "Notarization logs (run ${GITHUB_RUN_NUMBER})" \
+            --notes "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" -R "$GITHUB_REPOSITORY" "notary-logs-${GITHUB_RUN_NUMBER}.zip" || true
+          ls *.dmg >/dev/null 2>&1 || exit 0
+          rm -rf test/fonts-* || true
+          ditto -c -k --keepParent test "test-evidence-$V.zip" || true
+          gh release create "mac-$V-notarized-r${GITHUB_RUN_NUMBER}" --prerelease \
+            --title "Xrero Office $V for macOS (notarized, run ${GITHUB_RUN_NUMBER})" \
+            --notes "From $FROM. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 "test-evidence-$V.zip" 2>/dev/null)

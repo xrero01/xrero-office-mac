@@ -66,6 +66,8 @@ jobs:
           sudo chown -R "$(id -un)" "/Applications/Xrero Office.app"
           bash mas/sign_mas.sh "/Applications/Xrero Office.app" - mas/test.entitlements 2>&1 | tee out/logs/03-test-sign.log
           rm -rf ~/Library/Containers/com.xrero.office
+          bash mas/diagnose.sh "mas_out/Xrero Office.app" "/Applications/Xrero Office.app" out/logs || true
+          rm -rf ~/Library/Containers/com.xrero.office
           rc=0
           MAS_TEST=1 python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test 2>&1 | tee out/logs/04-sandbox-ui-test.log || rc=$?
           log show --last 15m --predicate 'process == "XreroOffice" OR process CONTAINS "editors_helper" OR process == "x2t" OR (process == "kernel" AND eventMessage CONTAINS "Sandbox")' --style compact 2>/dev/null | grep -i -E "deny|sandbox|crash|fault|error" | tail -300 > out/logs/05-sandbox-denials.log || true

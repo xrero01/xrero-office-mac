@@ -108,6 +108,31 @@ for root, dirs, files in os.walk(C):
 if left:
     raise SystemExit("[mas] still linked to Sparkle: %s" % left)
 
+# ------------------------------------------------------------------ Chromium's Mach port rendezvous name
+# Chromium's browser process registers the bootstrap name "<bundle id>.MachPortRendezvousServer.<pid>" and every
+# child process looks it up. Inside the App Sandbox a process may only register names that start with one of its
+# application groups ("<TEAM>.com.xrero.office", mas.entitlements), so registration fails ("Permission denied
+# (1100)") and the app aborts. The format string is used by both sides; it is rewritten (shorter, NUL-padded) to
+# "<TEAM>.%s.MPRendezvous.%d" -> "<TEAM>.com.xrero.office.MPRendezvous.<pid>", inside the app group.
+TEAM = os.environ.get("TEAM_ID", "")
+if len(TEAM) != 10 or not TEAM.isalnum():
+    raise SystemExit("[mas] TEAM_ID env (10 characters) is required")
+CEF = os.path.join(C, "Frameworks", "Chromium Embedded Framework.framework", "Versions", "A", "Chromium Embedded Framework")
+OLDF = b"%s.MachPortRendezvousServer.%d\0"
+NEWF = (TEAM + ".%s.MPRendezvous.%d").encode() + b"\0"
+assert len(NEWF) <= len(OLDF)
+NEWF = NEWF + b"\0" * (len(OLDF) - len(NEWF))
+blob = open(CEF, "rb").read()
+n = blob.count(OLDF)
+if n == 0 and blob.count(NEWF):
+    log("CEF rendezvous name already patched")
+elif n < 1:
+    raise SystemExit("[mas] rendezvous format string not found in CEF")
+else:
+    blob = blob.replace(OLDF, NEWF)
+    open(CEF, "wb").write(blob)
+    log("CEF rendezvous name ->", NEWF.rstrip(b"\0").decode(), "(%d place%s)" % (n, "" if n == 1 else "s"))
+
 # ------------------------------------------------------------------ stapled ticket of the official signature
 for root, dirs, files in os.walk(C):
     if root.endswith("/Contents") and "CodeResources" in files and "_CodeSignature" not in root:

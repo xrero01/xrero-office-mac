@@ -25,11 +25,10 @@ run() {  # run <name> <secs> <cmd...> : start, wait, report alive/exit code
 # A) no sandbox at all (ad-hoc, no entitlements): is the patched bundle itself healthy?
 rm -rf /tmp/plain-test.app; ditto "$SRC" /tmp/plain-test.app
 codesign --force --deep --sign - /tmp/plain-test.app >/dev/null 2>&1
-run A-plain-launcher 20 "/tmp/plain-test.app/Contents/MacOS/Xrero Office" --remote-debugging-port=9301
+run A-plain 20 "/tmp/plain-test.app/Contents/MacOS/XreroOffice" --remote-debugging-port=9301
 
 # B) sandboxed: the real binary directly, then the launcher
 run B1-sandbox-binary 20 "$APP/Contents/MacOS/XreroOffice" --remote-debugging-port=9302
-run B2-sandbox-launcher 20 "$APP/Contents/MacOS/Xrero Office" --remote-debugging-port=9303
 
 # C) the way Finder starts it
 open -a "$APP" --args --remote-debugging-port=9304 > "$D/C-open.out" 2>&1

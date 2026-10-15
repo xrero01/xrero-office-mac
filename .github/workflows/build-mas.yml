@@ -22,6 +22,7 @@ jobs:
     env:
       V: "20.0.9"
       PAYLOAD: "payload-20.0.9"
+      TEAM_ID: "Y5U46S55X5"      # Apple team (Developer ID certificate subject); checked against the API in the signing step
       GH_TOKEN: ${{ github.token }}
       UPLOAD: ${{ github.event_name == 'push' || inputs.upload }}
     steps:
@@ -64,7 +65,8 @@ jobs:
           sudo rm -rf "/Applications/Xrero Office.app"
           sudo ditto "mas_out/Xrero Office.app" "/Applications/Xrero Office.app"
           sudo chown -R "$(id -un)" "/Applications/Xrero Office.app"
-          bash mas/sign_mas.sh "/Applications/Xrero Office.app" - mas/test.entitlements 2>&1 | tee out/logs/03-test-sign.log
+          sed "s/__TEAM__/$TEAM_ID/g" mas/test.entitlements > "$RUNNER_TEMP/test.entitlements"
+          bash mas/sign_mas.sh "/Applications/Xrero Office.app" - "$RUNNER_TEMP/test.entitlements" 2>&1 | tee out/logs/03-test-sign.log
           rm -rf ~/Library/Containers/com.xrero.office
           bash mas/diagnose.sh "mas_out/Xrero Office.app" "/Applications/Xrero Office.app" out/logs || true
           rm -rf ~/Library/Containers/com.xrero.office
@@ -87,6 +89,7 @@ jobs:
           S="$RUNNER_TEMP/mas-sign"
           python3 mas/asc_mas.py signing "$S" 2>&1 | tee out/logs/06-asc-signing.log
           TEAM="$(cat "$S/team.txt")"; echo "TEAM=$TEAM" >> "$GITHUB_ENV"
+          [ "$TEAM" = "$TEAM_ID" ] || { echo "team from the API ($TEAM) differs from TEAM_ID ($TEAM_ID)"; exit 1; }
           KC="$RUNNER_TEMP/mas.keychain-db"; KCPW="$(uuidgen)"; P12PW="$(uuidgen)"
           security create-keychain -p "$KCPW" "$KC"; security set-keychain-settings -lut 21600 "$KC"; security unlock-keychain -p "$KCPW" "$KC"
           curl -fsSL -o "$S/wwdrg3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer

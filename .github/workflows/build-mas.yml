@@ -72,6 +72,8 @@ jobs:
           rm -rf ~/Library/Containers/com.xrero.office
           rc=0
           MAS_TEST=1 python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test 2>&1 | tee out/logs/04-sandbox-ui-test.log || rc=$?
+          rm -rf ~/Library/Containers/com.xrero.office
+          python3 mas/store_shots.py "/Applications/Xrero Office.app" test out/test/store 2>&1 | tee out/logs/04b-store-shots.log || true
           log show --last 15m --predicate 'process == "XreroOffice" OR process CONTAINS "editors_helper" OR process == "x2t" OR (process == "kernel" AND eventMessage CONTAINS "Sandbox")' --style compact 2>/dev/null | grep -i -E "deny|sandbox|crash|fault|error" | tail -300 > out/logs/05-sandbox-denials.log || true
           ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i -E "xrero|editors_helper|x2t" | head > out/logs/05-crash-reports.txt || true
           for f in $(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i -E "xrero|editors_helper" | head -3); do cp ~/Library/Logs/DiagnosticReports/"$f" out/logs/ || true; done

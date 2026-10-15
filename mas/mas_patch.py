@@ -134,6 +134,96 @@ else:
     open(CEF, "wb").write(blob)
     log("CEF rendezvous name ->", NEWF.rstrip(b"\0").decode(), "(%d place%s)" % (n, "" if n == 1 else "s"))
 
+# ------------------------------------------------------------------ framework bundles in Apple's layout
+# App Store processing rejects "flat" frameworks (ITMS-90291): every framework must be Versions/A/<content> with
+# Versions/Current -> A and top-level symlinks (<binary>, Resources, Libraries, ...) -> Versions/Current/<name>.
+# The official bundle ships Chromium Embedded Framework flat; any flat framework is rebuilt in place.
+def fix_framework(fw):
+    name = os.path.basename(fw)[:-len(".framework")]
+    versions = os.path.join(fw, "Versions")
+    changed = []
+    if not os.path.isdir(versions):
+        a = os.path.join(versions, "A")
+        os.makedirs(a)
+        for item in os.listdir(fw):
+            if item in ("Versions", "_CodeSignature"):
+                continue
+            shutil.move(os.path.join(fw, item), os.path.join(a, item))
+        shutil.rmtree(os.path.join(fw, "_CodeSignature"), ignore_errors=True)
+        changed.append("moved into Versions/A")
+    cur = os.path.join(versions, "Current")
+    if not os.path.islink(cur):
+        if os.path.exists(cur):
+            shutil.rmtree(cur)
+        real = [d for d in os.listdir(versions) if d != "Current" and os.path.isdir(os.path.join(versions, d))]
+        os.symlink("A" if "A" in real else sorted(real)[0], cur)
+        changed.append("Versions/Current link")
+    target = os.path.realpath(cur)
+    for item in os.listdir(target):
+        if item == "_CodeSignature":
+            continue
+        top = os.path.join(fw, item)
+        want = os.path.join("Versions", "Current", item)
+        if os.path.islink(top):
+            if os.readlink(top) == want:
+                continue
+            os.remove(top)                   # e.g. CEF ships "Libraries -> Versions/A/Libraries": Apple wants Current
+            os.symlink(want, top)
+            changed.append("re-pointed " + item)
+            continue
+        if os.path.exists(top):              # a real copy next to Versions: drop it, keep the versioned one
+            shutil.rmtree(top) if os.path.isdir(top) else os.remove(top)
+        os.symlink(want, top)
+        changed.append("link " + item)
+    for item in os.listdir(fw):            # anything else at the top that is not a link into Versions/Current
+        p = os.path.join(fw, item)
+        if item != "Versions" and not os.path.islink(p):
+            raise SystemExit("[mas] %s: unexpected top-level item %s" % (fw, item))
+    if not os.path.exists(os.path.join(fw, name)):
+        raise SystemExit("[mas] %s: no binary %s after the layout fix" % (fw, name))
+    return changed
+
+for root, dirs, files in os.walk(C):
+    for d in list(dirs):
+        if d.endswith(".framework"):
+            fw = os.path.join(root, d)
+            ch = fix_framework(fw)
+            if ch:
+                log("framework layout", os.path.relpath(fw, C), "->", ", ".join(ch))
+
+# ------------------------------------------------------------------ Xrero colours in the editors (light themes)
+# Word documents get the Xrero teal header and accents instead of the stock blue; spreadsheets and presentations keep
+# their green / orange headers so the three editors stay easy to tell apart. Dark themes are left as they are.
+XRERO_CSS = ("\n/* Xrero brand (mas_patch.py) */\n"
+             ":root,:root .theme-classic-light,:root .theme-white,:root .theme-gray{"
+             "--toolbar-header-document:#0585A1;--text-toolbar-header-on-background-document:#046B82;"
+             "--highlight-toolbar-tab-underline-document:#0585A1;--background-accent-button:#0585A1}\n")
+n_css = 0
+web = os.path.join(C, "Resources", "editors", "web-apps", "apps")
+for root, dirs, files in os.walk(web):
+    for f in files:
+        if f == "app.css" and root.replace("\\", "/").endswith("main/resources/css"):
+            fp = os.path.join(root, f)
+            css = open(fp, encoding="utf-8", errors="surrogateescape").read()
+            if "Xrero brand (mas_patch.py)" not in css:
+                open(fp, "a", encoding="utf-8", errors="surrogateescape").write(XRERO_CSS)
+                n_css += 1
+log("Xrero colours added to", n_css, "editor stylesheets")
+if n_css == 0:
+    raise SystemExit("[mas] no editor app.css found for the Xrero colours")
+
+# ------------------------------------------------------------------ document types: LSHandlerRank (ITMS-90788)
+pl_doc = plistlib.load(open(pl, "rb"))
+MAIN = ("docx", "xlsx", "pptx")
+n_rank = 0
+for dt in pl_doc.get("CFBundleDocumentTypes", []):
+    if "LSHandlerRank" not in dt:
+        exts = [e.lower() for e in dt.get("CFBundleTypeExtensions", [])]
+        dt["LSHandlerRank"] = "Default" if any(e in MAIN for e in exts) else "Alternate"
+        n_rank += 1
+plistlib.dump(pl_doc, open(pl, "wb"), fmt=plistlib.FMT_XML)
+log("LSHandlerRank added to", n_rank, "document types")
+
 # ------------------------------------------------------------------ stapled ticket of the official signature
 for root, dirs, files in os.walk(C):
     if root.endswith("/Contents") and "CodeResources" in files and "_CodeSignature" not in root:

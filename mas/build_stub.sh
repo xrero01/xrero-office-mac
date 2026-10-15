@@ -8,7 +8,7 @@ FW="$APP/Contents/Frameworks/XreroUI.framework"
 rm -rf "$FW"
 mkdir -p "$FW/Versions/B/Resources"
 ARCHS=(-arch arm64); [ "$ARCH" = "x86_64" ] && ARCHS=(-arch x86_64); [ "$ARCH" = "universal" ] && ARCHS=(-arch arm64 -arch x86_64)
-clang "${ARCHS[@]}" -mmacosx-version-min=11.0 -O2 -Wall -Werror -fobjc-arc -dynamiclib \
+clang "${ARCHS[@]}" -mmacosx-version-min=12.0 -O2 -Wall -Werror -fobjc-arc -dynamiclib \
   -install_name "@rpath/XreroUI.framework/Versions/B/XreroUI" \
   -framework AppKit -framework Foundation \
   -o "$FW/Versions/B/XreroUI" "$ROOT/mas/XreroUI.m"

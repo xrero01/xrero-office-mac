@@ -26,7 +26,8 @@ for k in [k for k in p if k.startswith("SU")]:
 p["CFBundleVersion"] = str(BUILD)
 p["ITSAppUsesNonExemptEncryption"] = False
 p["LSApplicationCategoryType"] = "public.app-category.productivity"
-p.setdefault("LSMinimumSystemVersion", "11.0")
+# Apple silicon only (arm64) is accepted by the Mac App Store when the deployment target is macOS 12 or later
+p["LSMinimumSystemVersion"] = "12.0"
 # The website build starts through a tiny launcher (launcher/launcher.c) that only seeds the Sparkle first-run
 # preference and then execv()s XreroOffice. Under the App Sandbox the exec'd binary re-runs sandbox initialisation
 # with ITS OWN code identity (no bundle Info.plist) and is killed ("Unable to get bundle identifier for container").

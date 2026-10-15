@@ -1,0 +1,149 @@
+name: build-mas
+# Mac App Store build of Xrero Office: the website build (build_mac.sh) turned into a sandboxed App Store app
+# (mas/), tested sandboxed on a real Mac, signed with Mac App Store certificates made through the App Store Connect
+# API key in the repo secrets, packaged (.pkg) and uploaded to App Store Connect. Logs + evidence -> a pre-release.
+on:
+  push:
+    branches: [mas]
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: upload to App Store Connect when the sandbox test passes
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  mas:
+    runs-on: macos-14
+    timeout-minutes: 120
+    env:
+      V: "20.0.9"
+      PAYLOAD: "payload-20.0.9"
+      GH_TOKEN: ${{ github.token }}
+      UPLOAD: ${{ github.event_name == 'push' || inputs.upload }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          set -o pipefail; mkdir -p out/logs
+          sw_vers; xcodebuild -version; uname -m; df -h / | tail -1
+          python3 -m pip install --quiet --break-system-packages pyjwt cryptography aiohttp pymupdf pypdfium2 \
+            || python3 -m pip install --quiet pyjwt cryptography aiohttp pymupdf pypdfium2
+
+      - name: Official ONLYOFFICE 9.4.0 arm64 bundle (pinned SHA-256) + Xrero payload
+        run: |
+          set -e
+          curl -sSL -o arm.dmg https://github.com/ONLYOFFICE/DesktopEditors/releases/download/v9.4.0/ONLYOFFICE-arm.dmg
+          echo "e965be2222609add6b5a70baa2a8cdb599402491fb2925825d9039dcb154beb4  arm.dmg" | shasum -a 256 -c -
+          gh release download "$PAYLOAD" -p xrero-payload.zip -R "$GITHUB_REPOSITORY"
+          mkdir payload && ditto -x -k xrero-payload.zip payload && ls payload payload/editors
+
+      - name: Build the app (same steps as the website build)
+        run: |
+          set -o pipefail
+          bash scripts/build_mac.sh arm.dmg arm64 "$V" payload out 2>&1 | tee out/logs/01-build.log
+
+      - name: App Store variant (no updater, App Store keys)
+        run: |
+          set -o pipefail
+          BUILD=$((200 + GITHUB_RUN_NUMBER)); echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          rm -rf mas_out && mkdir -p mas_out
+          ditto "out/arm64/Xrero Office.app" "mas_out/Xrero Office.app"
+          { python3 mas/mas_patch.py "mas_out/Xrero Office.app" "$BUILD"; bash mas/build_stub.sh "mas_out/Xrero Office.app" arm64; } 2>&1 | tee out/logs/02-mas-patch.log
+
+      - name: Test - sandboxed copy on this Mac (start page, open, type EN/AR, bold, save, menus, quit)
+        id: sandbox_test
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          osascript -e 'quit app "Xrero Office"' 2>/dev/null || true
+          sudo rm -rf "/Applications/Xrero Office.app"
+          sudo ditto "mas_out/Xrero Office.app" "/Applications/Xrero Office.app"
+          sudo chown -R "$(id -un)" "/Applications/Xrero Office.app"
+          bash mas/sign_mas.sh "/Applications/Xrero Office.app" - mas/test.entitlements 2>&1 | tee out/logs/03-test-sign.log
+          rm -rf ~/Library/Containers/com.xrero.office
+          rc=0
+          MAS_TEST=1 python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test 2>&1 | tee out/logs/04-sandbox-ui-test.log || rc=$?
+          log show --last 15m --predicate 'process == "XreroOffice" OR process CONTAINS "editors_helper" OR process == "x2t" OR (process == "kernel" AND eventMessage CONTAINS "Sandbox")' --style compact 2>/dev/null | grep -i -E "deny|sandbox|crash|fault|error" | tail -300 > out/logs/05-sandbox-denials.log || true
+          ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i -E "xrero|editors_helper|x2t" | head > out/logs/05-crash-reports.txt || true
+          for f in $(ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i -E "xrero|editors_helper" | head -3); do cp ~/Library/Logs/DiagnosticReports/"$f" out/logs/ || true; done
+          wc -l out/logs/05-sandbox-denials.log
+          exit $rc
+
+      - name: Mac App Store certificates + provisioning profile (App Store Connect API)
+        if: ${{ steps.sandbox_test.outcome == 'success' && env.UPLOAD == 'true' }}
+        env:
+          ASC_KEY: ${{ secrets.NOTARY_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          set -eo pipefail
+          S="$RUNNER_TEMP/mas-sign"
+          python3 mas/asc_mas.py signing "$S" 2>&1 | tee out/logs/06-asc-signing.log
+          TEAM="$(cat "$S/team.txt")"; echo "TEAM=$TEAM" >> "$GITHUB_ENV"
+          KC="$RUNNER_TEMP/mas.keychain-db"; KCPW="$(uuidgen)"; P12PW="$(uuidgen)"
+          security create-keychain -p "$KCPW" "$KC"; security set-keychain-settings -lut 21600 "$KC"; security unlock-keychain -p "$KCPW" "$KC"
+          curl -fsSL -o "$S/wwdrg3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$S/wwdrg3.cer" -k "$KC" -A || true
+          for c in app installer; do
+            openssl x509 -inform DER -in "$S/$c.cer" -out "$S/$c.pem"
+            openssl pkcs12 -export -legacy -inkey "$S/key.pem" -in "$S/$c.pem" -name "xrero-$c" -passout pass:"$P12PW" -out "$S/$c.p12" 2>/dev/null \
+              || openssl pkcs12 -export -inkey "$S/key.pem" -in "$S/$c.pem" -name "xrero-$c" -passout pass:"$P12PW" -out "$S/$c.p12"
+            security import "$S/$c.p12" -k "$KC" -P "$P12PW" -A -f pkcs12
+          done
+          rm -f "$S/key.pem" "$S"/*.p12
+          security set-key-partition-list -S apple-tool:,apple:,codesign:,productbuild: -s -k "$KCPW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v "$KC" | tee -a out/logs/06-asc-signing.log
+          APPID="$(security find-identity -v -p codesigning "$KC" | grep -o -E '"(3rd Party Mac Developer Application|Apple Distribution): [^"]*"' | head -1 | tr -d '"')"
+          INSTID="$(security find-identity -v "$KC" | grep -o -E '"(3rd Party Mac Developer Installer|Mac Installer Distribution): [^"]*"' | head -1 | tr -d '"')"
+          test -n "$APPID" && test -n "$INSTID"
+          { echo "APP_SIGN_ID=$APPID"; echo "INST_SIGN_ID=$INSTID"; echo "PROFILE=$S/profile.provisionprofile"; } >> "$GITHUB_ENV"
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s\n' "$ASC_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          security cms -D -i "$S/profile.provisionprofile" | plutil -p - | grep -E "Name|TeamIdentifier|application-identifier|ExpirationDate" -A1 | head -20 | tee -a out/logs/06-asc-signing.log
+
+      - name: Sign for the App Store + package (.pkg)
+        if: ${{ steps.sandbox_test.outcome == 'success' && env.UPLOAD == 'true' }}
+        run: |
+          set -eo pipefail
+          sed "s/__TEAM__/$TEAM/g" mas/mas.entitlements > "$RUNNER_TEMP/mas.entitlements"
+          bash mas/sign_mas.sh "mas_out/Xrero Office.app" "$APP_SIGN_ID" "$RUNNER_TEMP/mas.entitlements" "$PROFILE" 2>&1 | tee out/logs/07-mas-sign.log
+          PKG="out/XreroOffice-$V-mas-$BUILD.pkg"; echo "PKG=$PKG" >> "$GITHUB_ENV"
+          productbuild --component "mas_out/Xrero Office.app" /Applications --sign "$INST_SIGN_ID" "$PKG" 2>&1 | tee -a out/logs/07-mas-sign.log
+          pkgutil --check-signature "$PKG" | tee -a out/logs/07-mas-sign.log
+          ls -la "$PKG"
+
+      - name: App Store Connect - macOS platform on Xrero Office, validate, upload
+        if: ${{ steps.sandbox_test.outcome == 'success' && env.UPLOAD == 'true' }}
+        env:
+          ASC_KEY: ${{ secrets.NOTARY_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          set -o pipefail
+          python3 mas/asc_mas.py macos-version "$V" 2>&1 | tee out/logs/08-upload.log
+          xcrun altool --validate-app -f "$PKG" -t macos --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER" --output-format normal 2>&1 | tee -a out/logs/08-upload.log
+          xcrun altool --upload-app -f "$PKG" -t macos --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER" --output-format normal 2>&1 | tee -a out/logs/08-upload.log
+          grep -q -E "No errors uploading|UPLOAD SUCCEEDED|successfully uploaded" out/logs/08-upload.log
+
+      - name: Fail the run when the sandbox test failed
+        if: ${{ steps.sandbox_test.outcome != 'success' }}
+        run: exit 1
+
+      - name: Publish logs + evidence (release)
+        if: ${{ always() }}
+        run: |
+          rm -rf ~/.appstoreconnect
+          cd out
+          rm -rf test/fonts-* || true
+          ditto -c -k --keepParent logs "mas-logs-${BUILD:-x}.zip" || true
+          ditto -c -k --keepParent test "mas-test-evidence-${BUILD:-x}.zip" || true
+          TAG="mas-$V-r${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" --prerelease --title "Xrero Office $V Mac App Store build ${BUILD:-?} (run ${GITHUB_RUN_NUMBER}, sandbox test: ${{ steps.sandbox_test.outcome }})" \
+            --notes "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -R "$GITHUB_REPOSITORY" $(ls mas-logs-*.zip mas-test-evidence-*.zip 2>/dev/null) || true

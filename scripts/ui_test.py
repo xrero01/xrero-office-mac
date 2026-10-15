@@ -88,8 +88,11 @@ async def main():
         await asyncio.sleep(8)
         screencap("01-start")
         # first launch must not greet the user with prompts (Sparkle "check automatically?", etc.)
-        d = subprocess.run(["defaults", "read", "com.xrero.office", "SUEnableAutomaticChecks"], capture_output=True, text=True)
-        ok("first_launch_no_update_prompt", d.stdout.strip() == "0", "SUEnableAutomaticChecks=%r" % d.stdout.strip())
+        if os.environ.get("MAS_TEST"):
+            pass   # App Store build: no updater at all (checked on the menus below)
+        else:
+            d = subprocess.run(["defaults", "read", "com.xrero.office", "SUEnableAutomaticChecks"], capture_output=True, text=True)
+            ok("first_launch_no_update_prompt", d.stdout.strip() == "0", "SUEnableAutomaticChecks=%r" % d.stdout.strip())
         w = windows()
         res["windows_at_start"] = w
         print("windows:", w, flush=True)
@@ -161,6 +164,8 @@ async def main():
         menus = osa(PROC + ' to get name of every menu item of menu 1 of every menu bar item of menu bar 1')
         res["menus"] = menus
         ok("menus_no_onlyoffice", menus and "ONLYOFFICE" not in menus.upper(), menus[:300])
+        if os.environ.get("MAS_TEST"):
+            ok("mas_no_update_menu", menus and "UPDATE" not in menus.upper(), menus[:300])
         # About window (Xrero Office menu > About Xrero Office)
         osa('tell application id "com.xrero.office" to activate', PROC + ' to click menu item 1 of menu 1 of menu bar item 2 of menu bar 1')
         await asyncio.sleep(3)

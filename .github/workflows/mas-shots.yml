@@ -1,0 +1,52 @@
+name: mas-shots
+# Store screenshots only: builds the App Store variant, signs a sandboxed TEST copy ad hoc (no certificates, no
+# upload) and photographs the real app with sample documents. Output: a pre-release with store-*.png.
+on:
+  push:
+    branches: [mas-shots]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  shots:
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      V: "20.0.9"
+      PAYLOAD: "payload-20.0.9"
+      TEAM_ID: "Y5U46S55X5"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: python3 -m pip install --quiet --break-system-packages aiohttp pillow || python3 -m pip install --quiet aiohttp pillow
+      - name: Bundle + payload
+        run: |
+          set -e
+          curl -sSL -o arm.dmg https://github.com/ONLYOFFICE/DesktopEditors/releases/download/v9.4.0/ONLYOFFICE-arm.dmg
+          echo "e965be2222609add6b5a70baa2a8cdb599402491fb2925825d9039dcb154beb4  arm.dmg" | shasum -a 256 -c -
+          gh release download "$PAYLOAD" -p xrero-payload.zip -R "$GITHUB_REPOSITORY"
+          mkdir payload && ditto -x -k xrero-payload.zip payload
+      - name: Build + App Store variant
+        run: |
+          bash scripts/build_mac.sh arm.dmg arm64 "$V" payload out
+          ditto "out/arm64/Xrero Office.app" "mas_out/Xrero Office.app"
+          python3 mas/mas_patch.py "mas_out/Xrero Office.app" 999
+          bash mas/build_stub.sh "mas_out/Xrero Office.app" arm64
+      - name: Sandboxed copy + screenshots
+        run: |
+          sudo rm -rf "/Applications/Xrero Office.app"
+          sudo ditto "mas_out/Xrero Office.app" "/Applications/Xrero Office.app"
+          sudo chown -R "$(id -un)" "/Applications/Xrero Office.app"
+          sed "s/__TEAM__/$TEAM_ID/g" mas/test.entitlements > "$RUNNER_TEMP/test.entitlements"
+          bash mas/sign_mas.sh "/Applications/Xrero Office.app" - "$RUNNER_TEMP/test.entitlements" > /dev/null
+          rm -rf ~/Library/Containers/com.xrero.office
+          python3 mas/store_shots.py "/Applications/Xrero Office.app" test out/shots
+      - name: Publish
+        if: ${{ always() }}
+        run: |
+          cd out/shots 2>/dev/null || exit 0
+          gh release create "mas-shots-r${GITHUB_RUN_NUMBER}" --prerelease --title "Mac App Store screenshots (run ${GITHUB_RUN_NUMBER})" \
+            --notes "Real sandboxed app, sample documents." -R "$GITHUB_REPOSITORY" $(ls store-*.png store.json 2>/dev/null)

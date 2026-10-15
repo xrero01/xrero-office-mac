@@ -63,7 +63,7 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
         "promotionalText": "مجاني ويعمل دون إنترنت ومصمم للعربية أولاً. افتح ملفات docx وxlsx وpptx وعدّلها واحفظها على الماك. بلا حساب.",
     },
 }
-SHOTS = {"en-US": ["mac_en_start.png", "mac_en_editor.png"], "ar-SA": ["mac_ar_start.png", "mac_ar_editor.png"]}
+SHOTS = {"en-US": ["mac_en_start.png", "mac_en_writer.png", "mac_en_calc.png"], "ar-SA": ["mac_ar_writer.png", "mac_ar_calc.png", "mac_ar_start.png"]}
 
 NOTES = """XRERO OFFICE FOR MAC - APP REVIEW INFORMATION
 

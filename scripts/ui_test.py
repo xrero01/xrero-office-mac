@@ -165,7 +165,8 @@ async def main():
         res["menus"] = menus
         ok("menus_no_onlyoffice", menus and "ONLYOFFICE" not in menus.upper(), menus[:300])
         if os.environ.get("MAS_TEST"):
-            ok("mas_no_update_menu", menus and "UPDATE" not in menus.upper(), menus[:300])
+            # (the Apple menu may say "System Settings..., 1 update": only our "Check for Updates..." item counts)
+            ok("mas_no_update_menu", menus and "CHECK FOR UPDATE" not in menus.upper(), menus[:300])
         # About window (Xrero Office menu > About Xrero Office)
         osa('tell application id "com.xrero.office" to activate', PROC + ' to click menu item 1 of menu 1 of menu bar item 2 of menu bar 1')
         await asyncio.sleep(3)

@@ -1,0 +1,21 @@
+name: mas-metadata
+# Fills the macOS App Store version of Xrero Office (text EN/AR, Mac screenshots, review notes, build). Never submits.
+on:
+  push:
+    branches: [mas-meta]
+  workflow_dispatch:
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: App Store Connect - macOS store page
+        env:
+          ASC_KEY: ${{ secrets.NOTARY_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          python3 -m pip install --quiet pyjwt cryptography
+          python3 mas/mas_metadata.py

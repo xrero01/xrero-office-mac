@@ -108,6 +108,26 @@ async def main():
             ok("start_page_rendered", info and info.get("len", 0) > 50, json.dumps(info))
             ok("start_page_no_wall", info and not info.get("wall"), "")
             ok("start_page_no_onlyoffice_text", info and info.get("onlyoffice", 1) == 0, "count=%s" % (info or {}).get("onlyoffice"))
+            # first launch: the OPTIONAL Xrero account card (web/xr-account.js) with "Continue without an account"
+            acct = await pg.ev("""(function(){return {card:!!document.getElementById('xr-acct-ov'),
+              skip:!!document.getElementById('xr-acct-skip'), privacy:!!document.getElementById('xr-acct-privacy'),
+              pill:(document.getElementById('xr-acct-start')||{}).textContent||''};})()""")
+            ok("account_welcome_card", acct and acct.get("card") and acct.get("skip") and acct.get("privacy"), json.dumps(acct))
+            screencap("01c-account-welcome")
+            # a sign-in with a made-up account must come back with xrero.com's own answer (App Sandbox network + CORS)
+            ans = await pg.ev("""new Promise(function(done){try{
+              document.getElementById('xr-acct-email').value='mac-check@example.com';
+              document.getElementById('xr-acct-password').value='not-a-real-password';
+              document.getElementById('xr-acct-submit').click();}catch(e){done('error: '+e);return;}
+              var n=0,t=setInterval(function(){var e=document.querySelector('#xr-acct-ov .err');var s=e?e.textContent:'';
+                if(s||++n>40){clearInterval(t);done(s);}},250);})""")
+            ok("account_server_answer", ans and "Invalid email or password" in ans, repr(ans))
+            screencap("01d-account-answer")
+            await pg.ev("document.getElementById('xr-acct-skip').click()")
+            await asyncio.sleep(1)
+            gone = await pg.ev("[!document.getElementById('xr-acct-ov'), (document.getElementById('xr-acct-start')||{}).textContent||'']")
+            ok("account_skip", gone and gone[0] and gone[1], json.dumps(gone))
+            await pg.shot("01e-start-after-skip")
         # open a document the way Finder does
         doc = os.path.join(OUT, "ui-test-%s.docx" % ARCH)
         shutil.copy(os.path.join(TDIR, "inputs", "edge_cases.docx"), doc)
@@ -134,6 +154,14 @@ async def main():
               var sel=['#xr-b-ctx','#xr-hdr-btns .xr-lang','#xr-b-share','#xr-b-acct','#xr-designs-launch'];var o={};sel.forEach(function(q){
               var e=d.querySelector(q); o[q]= e? getComputedStyle(e).display : 'absent';});return o;})()""")
             ok("windows_only_buttons_hidden", hidden and all(v in ("none", "absent") for v in hidden.values()), json.dumps(hidden))
+            # the editor header offers the optional account (signed out: a Sign in button); the welcome choice made on the
+            # start page is visible here too (the pages share their storage)
+            hb = await pg.ev("""(function(){var f=document.querySelector('iframe[name=frameEditor]');var d=f&&f.contentDocument||document;
+              var w=f&&f.contentWindow||window;var b=d.getElementById('xr-b-signin-mac');
+              return {button: b? getComputedStyle(b).display : 'absent', label: b? b.textContent : '',
+                welcomeSeen: (function(){try{return w.localStorage.getItem('xr-acct-welcome');}catch(e){return 'err';}})()};})()""")
+            ok("editor_sign_in_button", hb and hb.get("button") not in ("none", "absent"), json.dumps(hb))
+            ok("account_state_shared", hb and hb.get("welcomeSeen") == "1", json.dumps(hb))
             vw = await pg.ev("[innerWidth, innerHeight]") or [1200, 800]
             x, y = vw[0] * 0.5, vw[1] * 0.45
             await pg.click(x, y); await asyncio.sleep(0.6); await pg.click(x, y); await asyncio.sleep(0.6)

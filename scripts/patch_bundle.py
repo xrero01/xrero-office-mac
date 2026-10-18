@@ -174,13 +174,18 @@ for b in glob.glob(os.path.join(E, "sdkjs", "*", "sdk-all.bin")) + glob.glob(os.
 log("editors replaced; snapshots removed")
 
 # Hide the Xrero header controls that call Windows-only native commands (PDF->Word converter, Designs dialog,
-# EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share, account) - on Mac they would be
-# dead buttons. The Mac UI language follows macOS (or the start page's Settings).
+# EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share) - on Mac they would be dead buttons.
+# The Mac UI language follows macOS (or the start page's Settings). The account chip + menu stay: web/xr-account.js
+# (appended below) answers them on Mac.
+# the optional Xrero account (sign in / create / sign out / delete) - web/xr-account.js, start page + editors
+ACCT_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "xr-account.js"), encoding="utf-8").read()
+if "/*XR-ACCT-START*/" not in ACCT_JS or "/*XR-ACCT-END*/" not in ACCT_JS:
+    raise SystemExit("web/xr-account.js markers missing")
 MAC_JS = r"""
 /*XR-MAC-START*/
 (function(){
   if (!/Mac/i.test(navigator.platform || '')) return;
-  var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-b-acct,#xr-acct-menu,#xr-designs-launch,#xr-design-ov{display:none!important}';
+  var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-designs-launch,#xr-design-ov{display:none!important}';
   function add(){
     if (document.getElementById('xr-mac-css')) return;
     var s = document.createElement('style'); s.id = 'xr-mac-css'; s.textContent = css;
@@ -195,21 +200,23 @@ for e in ("documenteditor", "spreadsheeteditor", "presentationeditor", "pdfedito
     if os.path.exists(f):
         s = open(f, encoding="utf-8").read()
         s = re.sub(r"\n?/\*XR-MAC-START\*/.*?/\*XR-MAC-END\*/\n?", "", s, flags=re.S)
-        open(f, "w", encoding="utf-8").write(s.rstrip() + "\n" + MAC_JS)
-log("mac header shim appended to app.js")
+        s = re.sub(r"\n?/\*XR-ACCT-START\*/.*?/\*XR-ACCT-END\*/\n?", "", s, flags=re.S)
+        open(f, "w", encoding="utf-8").write(s.rstrip() + "\n" + MAC_JS + ACCT_JS + "\n")
+log("mac header shim + Xrero account appended to app.js")
 
 # ---------------------------------------------------------------- start page
 login = os.path.join(RES, "login", "index.html")
 s = open(os.path.join(PAYLOAD, "login", "index.html"), encoding="utf-8").read()
 n0 = len(s)
-# the sign-in wall waits for the Windows shell's answer - on Mac nobody answers and it would never unlock
-s, n_wall = re.subn(r'<script id="xrero-wall">.*?</script>\s*', "", s, flags=re.S)
+# the sign-in wall waits for the Windows shell's answer - on Mac nobody answers and it would never unlock; the Mac gets
+# the OPTIONAL account instead (App Store 5.1.1: an account must not be required for features that do not need one)
+s, n_wall = re.subn(r'<script id="xrero-wall">.*?</script>\s*', lambda m: '<script id="xrero-account">' + ACCT_JS + '</script>\n', s, flags=re.S)
 # "Open PDF as DOCX..." needs the Windows PDF converter
 s, n_conv = re.subn(r"function addConvertItem\(\)\s*\{", "function addConvertItem(){ if (/Mac/i.test(navigator.platform||'')) return true;", s)
 if n_wall != 1 or n_conv != 1:
     raise SystemExit("start page anchors not found (wall=%d convert=%d)" % (n_wall, n_conv))
 open(login, "w", encoding="utf-8").write(s)
-log("start page: wall removed, convert item disabled (%d -> %d chars)" % (n0, len(s)))
+log("start page: wall -> optional account, convert item disabled (%d -> %d chars)" % (n0, len(s)))
 
 # ---------------------------------------------------------------- leftovers report
 left = []

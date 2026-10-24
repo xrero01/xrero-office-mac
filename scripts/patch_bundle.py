@@ -183,6 +183,7 @@ ACCT_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "w
 if "/*XR-ACCT-START*/" not in ACCT_JS or "/*XR-ACCT-END*/" not in ACCT_JS:
     raise SystemExit("web/xr-account.js markers missing")
 HOME_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "xr-home.js"), encoding="utf-8").read()
+HOME_JS = HOME_JS.replace("__XR_VERSION__", VERSION)          # the Mac app's own version in the About window
 if "/*XR-HOME-START*/" not in HOME_JS or "/*XR-HOME-END*/" not in HOME_JS:
     raise SystemExit("web/xr-home.js markers missing")
 MAC_JS = r"""

@@ -42,11 +42,18 @@ def windows():
 
 class Page:
     def __init__(self, ws): self.ws, self.n = ws, 0
-    async def call(self, m, p=None):
+    async def call(self, m, p=None, timeout=60):
+        # 24 Oct 2026: never wait forever (run 210 hung 2 h on a key event the page never answered)
         self.n += 1; await self.ws.send_json({"id": self.n, "method": m, "params": p or {}})
-        while True:
-            r = await self.ws.receive_json()
-            if r.get("id") == self.n: return r
+        async def wait():
+            while True:
+                r = await self.ws.receive_json()
+                if r.get("id") == self.n: return r
+        try:
+            return await asyncio.wait_for(wait(), timeout)
+        except asyncio.TimeoutError:
+            print("TIMEOUT %s after %ss" % (m, timeout), flush=True)
+            return {}
     async def ev(self, expr):
         r = await self.call("Runtime.evaluate", {"expression": expr, "returnByValue": True, "awaitPromise": True})
         return r.get("result", {}).get("result", {}).get("value")
@@ -65,7 +72,10 @@ class Page:
         for t in ("mousePressed", "mouseReleased"):
             await self.call("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
 
+test_pw = ""
+
 async def main():
+    global test_pw
     cmd = (["arch", "-x86_64"] if ARCH == "x86_64" else []) + [EXE, "--remote-debugging-port=%d" % PORT]
     proc = subprocess.Popen(cmd, stdout=open(os.path.join(OUT, "app-%s.log" % ARCH), "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
@@ -108,6 +118,58 @@ async def main():
             ok("start_page_rendered", info and info.get("len", 0) > 50, json.dumps(info))
             ok("start_page_no_wall", info and not info.get("wall"), "")
             ok("start_page_no_onlyoffice_text", info and info.get("onlyoffice", 1) == 0, "count=%s" % (info or {}).get("onlyoffice"))
+            # first launch: the REQUIRED Xrero account card (web/xr-account.js, 24 Oct 2026): no skip, no close, privacy link
+            acct = await pg.ev("""(function(){var o=document.getElementById('xr-acct-ov');return {card:!!o,
+              wall:!!(o&&o.getAttribute('data-wall')), skip:!!document.getElementById('xr-acct-skip'),
+              close:!!document.getElementById('xr-acct-close'), privacy:!!document.getElementById('xr-acct-privacy'),
+              create:!!document.getElementById('xr-acct-tab-new')};})()""")
+            ok("account_wall", acct and acct.get("card") and acct.get("wall") and not acct.get("skip") and not acct.get("close")
+               and acct.get("privacy") and acct.get("create"), json.dumps(acct))
+            screencap("01c-account-wall")
+            # Escape and a click beside the card must not open the app (sent as page events: the same handlers run)
+            still = await pg.ev("""new Promise(function(done){var o=document.getElementById('xr-acct-ov');
+              o.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+              o.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+              setTimeout(function(){done(!!document.getElementById('xr-acct-ov'));},1200);})""")
+            ok("account_wall_stays", still is True, repr(still))
+            # a sign-in with a made-up account must come back with xrero.com's own answer (App Sandbox network + CORS)
+            ans = await pg.ev("""new Promise(function(done){try{
+              document.getElementById('xr-acct-email').value='mac-check@example.com';
+              document.getElementById('xr-acct-password').value='not-a-real-password';
+              document.getElementById('xr-acct-submit').click();}catch(e){done('error: '+e);return;}
+              var n=0,t=setInterval(function(){var e=document.querySelector('#xr-acct-ov .err');var s=e?e.textContent:'';
+                if(s||++n>40){clearInterval(t);done(s);}},250);})""")
+            ok("account_server_answer", ans and "Invalid email or password" in ans, repr(ans))
+            screencap("01d-account-answer")
+            # create a real account in the app (a test account, deleted again at the end of this test)
+            test_mail = "mac-store-check-%d@xrero.com" % int(time.time())
+            test_pw = base64.urlsafe_b64encode(os.urandom(12)).decode()
+            res["test_account"] = test_mail
+            made = await pg.ev("""new Promise(function(done){try{
+              document.getElementById('xr-acct-tab-new').click();
+              document.getElementById('xr-acct-name').value='Mac Store Check';
+              document.getElementById('xr-acct-email').value=%s;
+              document.getElementById('xr-acct-password').value=%s;
+              document.getElementById('xr-acct-submit').click();}catch(e){done('error: '+e);return;}
+              var n=0,t=setInterval(function(){var o=document.getElementById('xr-acct-ov');var e=o&&o.querySelector('.err');
+                if(!o||(e&&e.textContent)||++n>60){clearInterval(t);done(o?('still: '+(e?e.textContent:'')):'open');}},250);})"""
+              % (json.dumps(test_mail), json.dumps(test_pw)))
+            ok("account_create_opens_app", made == "open", repr(made))
+            await asyncio.sleep(1.5)
+            pill = await pg.ev("(document.getElementById('xr-acct-start')||{}).textContent||''")
+            ok("account_signed_in_pill", pill == "Mac Store Check", repr(pill))
+            # the four apps = the start page's own cards, as on Windows (DOCX, XLSX, PPTX, PDF): all four whole, no scroll bar
+            tiles = await pg.ev("""(function(){var g=document.getElementById('area-document-creation-grid');
+              var its=[].slice.call(document.querySelectorAll('#area-document-creation-grid .document-creation-item'));
+              var gr=g?g.getBoundingClientRect():{right:0};
+              return {n:its.length, labels:its.map(function(e){return (e.querySelector('.format-label')||{}).textContent.trim();}),
+                whole:its.every(function(e){var r=e.getBoundingClientRect();return r.width>100&&r.right<=gr.right+1;}),
+                rows:its.map(function(e){return Math.round(e.getBoundingClientRect().top);}).filter(function(v,i,a){return a.indexOf(v)===i;}).length,
+                scroll:g?g.scrollWidth>g.clientWidth+1:true};})()""")
+            ok("four_app_cards", tiles and tiles.get("n") == 4 and tiles.get("whole") and not tiles.get("scroll")
+               and tiles.get("labels") == ["DOCX", "XLSX", "PPTX", "PDF"], json.dumps(tiles))
+            await pg.shot("01e-start-four-apps")
+            screencap("01e-start-four-apps")
         # open a document the way Finder does
         doc = os.path.join(OUT, "ui-test-%s.docx" % ARCH)
         shutil.copy(os.path.join(TDIR, "inputs", "edge_cases.docx"), doc)
@@ -131,9 +193,15 @@ async def main():
             await pg.shot("02-editor-open")
             screencap("02-editor-open")
             hidden = await pg.ev("""(function(){var d=document.querySelector('iframe[name=frameEditor]');d=d&&d.contentDocument||document;
-              var sel=['#xr-b-ctx','#xr-hdr-btns .xr-lang','#xr-b-share','#xr-b-acct','#xr-designs-launch'];var o={};sel.forEach(function(q){
+              var sel=['#xr-b-ctx','#xr-hdr-btns .xr-lang','#xr-b-share','#xr-designs-launch'];var o={};sel.forEach(function(q){
               var e=d.querySelector(q); o[q]= e? getComputedStyle(e).display : 'absent';});return o;})()""")
             ok("windows_only_buttons_hidden", hidden and all(v in ("none", "absent") for v in hidden.values()), json.dumps(hidden))
+            # signed in on the start page = signed in here too (the pages share their storage): no card in the editor
+            hb = await pg.ev("""(function(){var f=document.querySelector('iframe[name=frameEditor]');var d=f&&f.contentDocument||document;
+              var w=f&&f.contentWindow||window;
+              return {wall: !!(d.getElementById('xr-acct-ov')||document.getElementById('xr-acct-ov')),
+                token: (function(){try{return !!w.localStorage.getItem('xr-acct-token');}catch(e){return 'err';}})()};})()""")
+            ok("editor_open_when_signed_in", hb and hb.get("wall") is False and hb.get("token") is True, json.dumps(hb))
             vw = await pg.ev("[innerWidth, innerHeight]") or [1200, 800]
             x, y = vw[0] * 0.5, vw[1] * 0.45
             await pg.click(x, y); await asyncio.sleep(0.6); await pg.click(x, y); await asyncio.sleep(0.6)
@@ -197,6 +265,19 @@ async def main():
         time.sleep(5)
     except Exception: pass
     if proc.poll() is None: proc.kill()
+    # the test account goes again (log in for a token, then delete with the password - the app's own Delete account path)
+    if res.get("test_account"):
+        try:
+            async with aiohttp.ClientSession() as h:
+                async with h.post("https://xrero.com/office/api/login", data=json.dumps(
+                        {"email": res["test_account"], "password": test_pw}), headers={"Content-Type": "text/plain"}) as r:
+                    tok = (await r.json(content_type=None)).get("token")
+                async with h.post("https://xrero.com/office/api/delete", data=json.dumps(
+                        {"token": tok, "password": test_pw}), headers={"Content-Type": "text/plain"}) as r:
+                    gone = (await r.json(content_type=None)).get("ok")
+            ok("test_account_deleted", gone is True, res["test_account"])
+        except Exception as e:
+            ok("test_account_deleted", False, repr(e))
 
 asyncio.run(main())
 res["passed"] = sum(1 for c in res["checks"].values() if c["pass"]); res["total"] = len(res["checks"])

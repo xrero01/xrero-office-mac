@@ -57,8 +57,14 @@
     var a = document.querySelector('.tool-menu a[action="about"]');
     if (!a) return;
     var li = a.closest('li');
-    if (li && li.classList.contains('extra')) li.classList.remove('extra');
-    if (li && li.style.display === 'none') li.style.display = '';
+    if (!li) return;
+    if (li.classList.contains('extra')) li.classList.remove('extra');
+    if (getComputedStyle(li).display === 'none') {
+      // still hidden by another rule of the start page: show it the way the Settings item is shown
+      var st = document.querySelector('.tool-menu a[action="settings"]');
+      var sd = st && st.closest('li') ? getComputedStyle(st.closest('li')).display : 'list-item';
+      li.style.setProperty('display', sd === 'none' ? 'list-item' : sd, 'important');
+    }
   }
   // before the start page's own handler (it would look for the Windows shell's About data, which never comes on Mac)
   document.addEventListener('click', function (e) {

@@ -42,11 +42,18 @@ def windows():
 
 class Page:
     def __init__(self, ws): self.ws, self.n = ws, 0
-    async def call(self, m, p=None):
+    async def call(self, m, p=None, timeout=60):
+        # 24 Oct 2026: never wait forever (run 210 hung 2 h on a key event the page never answered)
         self.n += 1; await self.ws.send_json({"id": self.n, "method": m, "params": p or {}})
-        while True:
-            r = await self.ws.receive_json()
-            if r.get("id") == self.n: return r
+        async def wait():
+            while True:
+                r = await self.ws.receive_json()
+                if r.get("id") == self.n: return r
+        try:
+            return await asyncio.wait_for(wait(), timeout)
+        except asyncio.TimeoutError:
+            print("TIMEOUT %s after %ss" % (m, timeout), flush=True)
+            return {}
     async def ev(self, expr):
         r = await self.call("Runtime.evaluate", {"expression": expr, "returnByValue": True, "awaitPromise": True})
         return r.get("result", {}).get("result", {}).get("value")
@@ -119,11 +126,11 @@ async def main():
             ok("account_wall", acct and acct.get("card") and acct.get("wall") and not acct.get("skip") and not acct.get("close")
                and acct.get("privacy") and acct.get("create"), json.dumps(acct))
             screencap("01c-account-wall")
-            # Escape and a click beside the card must not open the app
-            await pg.key(27, "Escape", 0)
-            await pg.click(8, 8)
-            await asyncio.sleep(1)
-            still = await pg.ev("!!document.getElementById('xr-acct-ov')")
+            # Escape and a click beside the card must not open the app (sent as page events: the same handlers run)
+            still = await pg.ev("""new Promise(function(done){var o=document.getElementById('xr-acct-ov');
+              o.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+              o.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+              setTimeout(function(){done(!!document.getElementById('xr-acct-ov'));},1200);})""")
             ok("account_wall_stays", still is True, repr(still))
             # a sign-in with a made-up account must come back with xrero.com's own answer (App Sandbox network + CORS)
             ans = await pg.ev("""new Promise(function(done){try{

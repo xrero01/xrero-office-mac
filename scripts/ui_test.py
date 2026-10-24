@@ -65,7 +65,10 @@ class Page:
         for t in ("mousePressed", "mouseReleased"):
             await self.call("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
 
+test_pw = ""
+
 async def main():
+    global test_pw
     cmd = (["arch", "-x86_64"] if ARCH == "x86_64" else []) + [EXE, "--remote-debugging-port=%d" % PORT]
     proc = subprocess.Popen(cmd, stdout=open(os.path.join(OUT, "app-%s.log" % ARCH), "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
@@ -105,12 +108,20 @@ async def main():
             ok("start_page_rendered", info and info.get("len", 0) > 50, json.dumps(info))
             ok("start_page_no_wall", info and not info.get("wall"), "")
             ok("start_page_no_onlyoffice_text", info and info.get("onlyoffice", 1) == 0, "count=%s" % (info or {}).get("onlyoffice"))
-            # first launch: the OPTIONAL Xrero account card (web/xr-account.js) with "Continue without an account"
-            acct = await pg.ev("""(function(){return {card:!!document.getElementById('xr-acct-ov'),
-              skip:!!document.getElementById('xr-acct-skip'), privacy:!!document.getElementById('xr-acct-privacy'),
-              pill:(document.getElementById('xr-acct-start')||{}).textContent||''};})()""")
-            ok("account_welcome_card", acct and acct.get("card") and acct.get("skip") and acct.get("privacy"), json.dumps(acct))
-            screencap("01c-account-welcome")
+            # first launch: the REQUIRED Xrero account card (web/xr-account.js, 24 Oct 2026): no skip, no close, privacy link
+            acct = await pg.ev("""(function(){var o=document.getElementById('xr-acct-ov');return {card:!!o,
+              wall:!!(o&&o.getAttribute('data-wall')), skip:!!document.getElementById('xr-acct-skip'),
+              close:!!document.getElementById('xr-acct-close'), privacy:!!document.getElementById('xr-acct-privacy'),
+              create:!!document.getElementById('xr-acct-tab-new')};})()""")
+            ok("account_wall", acct and acct.get("card") and acct.get("wall") and not acct.get("skip") and not acct.get("close")
+               and acct.get("privacy") and acct.get("create"), json.dumps(acct))
+            screencap("01c-account-wall")
+            # Escape and a click beside the card must not open the app
+            await pg.key(27, "Escape", 0)
+            await pg.click(8, 8)
+            await asyncio.sleep(1)
+            still = await pg.ev("!!document.getElementById('xr-acct-ov')")
+            ok("account_wall_stays", still is True, repr(still))
             # a sign-in with a made-up account must come back with xrero.com's own answer (App Sandbox network + CORS)
             ans = await pg.ev("""new Promise(function(done){try{
               document.getElementById('xr-acct-email').value='mac-check@example.com';
@@ -120,11 +131,31 @@ async def main():
                 if(s||++n>40){clearInterval(t);done(s);}},250);})""")
             ok("account_server_answer", ans and "Invalid email or password" in ans, repr(ans))
             screencap("01d-account-answer")
-            await pg.ev("document.getElementById('xr-acct-skip').click()")
-            await asyncio.sleep(1)
-            gone = await pg.ev("[!document.getElementById('xr-acct-ov'), (document.getElementById('xr-acct-start')||{}).textContent||'']")
-            ok("account_skip", gone and gone[0] and gone[1], json.dumps(gone))
-            await pg.shot("01e-start-after-skip")
+            # create a real account in the app (a test account, deleted again at the end of this test)
+            test_mail = "mac-store-check-%d@xrero.com" % int(time.time())
+            test_pw = base64.urlsafe_b64encode(os.urandom(12)).decode()
+            res["test_account"] = test_mail
+            made = await pg.ev("""new Promise(function(done){try{
+              document.getElementById('xr-acct-tab-new').click();
+              document.getElementById('xr-acct-name').value='Mac Store Check';
+              document.getElementById('xr-acct-email').value=%s;
+              document.getElementById('xr-acct-password').value=%s;
+              document.getElementById('xr-acct-submit').click();}catch(e){done('error: '+e);return;}
+              var n=0,t=setInterval(function(){var o=document.getElementById('xr-acct-ov');var e=o&&o.querySelector('.err');
+                if(!o||(e&&e.textContent)||++n>60){clearInterval(t);done(o?('still: '+(e?e.textContent:'')):'open');}},250);})"""
+              % (json.dumps(test_mail), json.dumps(test_pw)))
+            ok("account_create_opens_app", made == "open", repr(made))
+            await asyncio.sleep(1.5)
+            pill = await pg.ev("(document.getElementById('xr-acct-start')||{}).textContent||''")
+            ok("account_signed_in_pill", pill == "Mac Store Check", repr(pill))
+            # the four apps as large tiles; the small create row is hidden
+            tiles = await pg.ev("""(function(){var ids=['word','cell','slide','pdf'];var o={};ids.forEach(function(k){
+              var b=document.getElementById('xr-home-'+k);o[k]=b?[b.textContent,Math.round(b.getBoundingClientRect().height)]:null;});
+              var g=document.getElementById('area-document-creation-grid');o.small=g?getComputedStyle(g).display:'absent';return o;})()""")
+            ok("four_app_tiles", tiles and all(tiles.get(k) and tiles[k][1] >= 120 for k in ("word", "cell", "slide", "pdf"))
+               and tiles.get("small") in ("none", "absent"), json.dumps(tiles, ensure_ascii=False))
+            await pg.shot("01e-start-four-apps")
+            screencap("01e-start-four-apps")
         # open a document the way Finder does
         doc = os.path.join(OUT, "ui-test-%s.docx" % ARCH)
         shutil.copy(os.path.join(TDIR, "inputs", "edge_cases.docx"), doc)
@@ -148,17 +179,15 @@ async def main():
             await pg.shot("02-editor-open")
             screencap("02-editor-open")
             hidden = await pg.ev("""(function(){var d=document.querySelector('iframe[name=frameEditor]');d=d&&d.contentDocument||document;
-              var sel=['#xr-b-ctx','#xr-hdr-btns .xr-lang','#xr-b-share','#xr-b-acct','#xr-designs-launch'];var o={};sel.forEach(function(q){
+              var sel=['#xr-b-ctx','#xr-hdr-btns .xr-lang','#xr-b-share','#xr-designs-launch'];var o={};sel.forEach(function(q){
               var e=d.querySelector(q); o[q]= e? getComputedStyle(e).display : 'absent';});return o;})()""")
             ok("windows_only_buttons_hidden", hidden and all(v in ("none", "absent") for v in hidden.values()), json.dumps(hidden))
-            # the editor header offers the optional account (signed out: a Sign in button); the welcome choice made on the
-            # start page is visible here too (the pages share their storage)
+            # signed in on the start page = signed in here too (the pages share their storage): no card in the editor
             hb = await pg.ev("""(function(){var f=document.querySelector('iframe[name=frameEditor]');var d=f&&f.contentDocument||document;
-              var w=f&&f.contentWindow||window;var b=d.getElementById('xr-b-signin-mac');
-              return {button: b? getComputedStyle(b).display : 'absent', label: b? b.textContent : '',
-                welcomeSeen: (function(){try{return w.localStorage.getItem('xr-acct-welcome');}catch(e){return 'err';}})()};})()""")
-            ok("editor_sign_in_button", hb and hb.get("button") not in ("none", "absent"), json.dumps(hb))
-            ok("account_state_shared", hb and hb.get("welcomeSeen") == "1", json.dumps(hb))
+              var w=f&&f.contentWindow||window;
+              return {wall: !!(d.getElementById('xr-acct-ov')||document.getElementById('xr-acct-ov')),
+                token: (function(){try{return !!w.localStorage.getItem('xr-acct-token');}catch(e){return 'err';}})()};})()""")
+            ok("editor_open_when_signed_in", hb and hb.get("wall") is False and hb.get("token") is True, json.dumps(hb))
             vw = await pg.ev("[innerWidth, innerHeight]") or [1200, 800]
             x, y = vw[0] * 0.5, vw[1] * 0.45
             await pg.click(x, y); await asyncio.sleep(0.6); await pg.click(x, y); await asyncio.sleep(0.6)
@@ -219,6 +248,19 @@ async def main():
         time.sleep(5)
     except Exception: pass
     if proc.poll() is None: proc.kill()
+    # the test account goes again (log in for a token, then delete with the password - the app's own Delete account path)
+    if res.get("test_account"):
+        try:
+            async with aiohttp.ClientSession() as h:
+                async with h.post("https://xrero.com/office/api/login", data=json.dumps(
+                        {"email": res["test_account"], "password": test_pw}), headers={"Content-Type": "text/plain"}) as r:
+                    tok = (await r.json(content_type=None)).get("token")
+                async with h.post("https://xrero.com/office/api/delete", data=json.dumps(
+                        {"token": tok, "password": test_pw}), headers={"Content-Type": "text/plain"}) as r:
+                    gone = (await r.json(content_type=None)).get("ok")
+            ok("test_account_deleted", gone is True, res["test_account"])
+        except Exception as e:
+            ok("test_account_deleted", False, repr(e))
 
 asyncio.run(main())
 res["passed"] = sum(1 for c in res["checks"].values() if c["pass"]); res["total"] = len(res["checks"])

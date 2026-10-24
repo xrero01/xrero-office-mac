@@ -1,10 +1,12 @@
 /*XR-ACCT-START*/
-/* Xrero account on macOS (start page + every editor) - the same optional account as Xrero Office for Windows and
+/* Xrero account on macOS (start page + every editor) - the same Xrero account as Xrero Office for Windows and
  * iPhone/iPad, talking straight to xrero.com/office/api (on Windows the native shell does this; on Mac nobody would).
  *
- * App Store rules this follows: the account is OPTIONAL (everything works without it, documents stay on the Mac),
- * creating an account is possible in the app, and so is DELETING it (5.1.1(v)); email + password only - no third-party
- * sign-in, so Sign in with Apple is not required (4.8). The privacy policy is one click away.
+ * 24 Oct 2026 (owner: «لازم الناس تسجل ... زي ما احنا عملنا»): the account is REQUIRED, like Windows - without one the
+ * start page and every editor stay behind the sign-in card (no skip). Kept from the App Store rules: creating an
+ * account is possible in the app, and so is DELETING it (5.1.1(v)); email + password only - no third-party sign-in, so
+ * Sign in with Apple is not required (4.8); documents stay on the Mac; the privacy policy is one click away. Offline,
+ * an account that was signed in keeps working (validate fails -> the stored account stays).
  *
  * State (shared localStorage of the app's pages):  xr-acct-token = the account token,
  *   xr-acct = {locked, name, email}  - read by the editors' header chip (same key the Windows start page writes). */
@@ -17,6 +19,7 @@
   var PRIVACY = 'https://xrero.com/privacy';
   var K_TOKEN = 'xr-acct-token', K_INFO = 'xr-acct', K_PLAN = 'xr-acct-plan', K_WELCOME = 'xr-acct-welcome';
   var isEditor = /\/main\/index\.html$/.test(location.pathname);
+  var REQUIRED = true;                              // no account -> the card cannot be closed
 
   function ls(k, v) {
     try {
@@ -37,7 +40,7 @@
   var S = {
     en: {
       title: 'Xrero account', welcome: 'Welcome to Xrero Office',
-      intro: 'Sign in with the same Xrero account you use in Xrero Office for Windows and iPhone. It is optional - everything works without an account, and your documents stay on your Mac.',
+      intro: 'Create your free Xrero account, or sign in with the one you use in Xrero Office for Windows and iPhone. Your documents stay on your Mac.',
       signin: 'Sign in', create: 'Create account', name: 'Name', email: 'Email', password: 'Password (8+ characters)',
       skip: 'Continue without an account', close: 'Close', privacy: 'Privacy Policy',
       signout: 'Sign out', del: 'Delete account', delTitle: 'Delete your Xrero account?',
@@ -49,7 +52,7 @@
     },
     ar: {
       title: 'حساب Xrero', welcome: 'مرحبًا بك في Xrero Office',
-      intro: 'سجّل الدخول بنفس حساب Xrero الذي تستخدمه في Xrero Office على ويندوز والآيفون. تسجيل الدخول اختياري - كل شيء يعمل بدون حساب، ومستنداتك تبقى على جهاز الماك.',
+      intro: 'أنشئ حساب Xrero المجاني، أو سجّل الدخول بنفس الحساب الذي تستخدمه في Xrero Office على ويندوز والآيفون. مستنداتك تبقى على جهاز الماك.',
       signin: 'تسجيل الدخول', create: 'إنشاء حساب', name: 'الاسم', email: 'البريد الإلكتروني', password: 'كلمة المرور (8 أحرف على الأقل)',
       skip: 'المتابعة بدون حساب', close: 'إغلاق', privacy: 'سياسة الخصوصية',
       signout: 'تسجيل الخروج', del: 'حذف الحساب', delTitle: 'حذف حساب Xrero؟',
@@ -163,17 +166,26 @@
     var n = (a.name || a.email || '?').trim().split(/\s+/);
     return ((n[0] || '?')[0] + (n.length > 1 ? n[n.length - 1][0] : '')).toUpperCase();
   }
-  function close() { var o = document.getElementById('xr-acct-ov'); if (o) o.parentNode.removeChild(o); update(); }
+  function walled() { return REQUIRED && !info(); }
+  function close() {
+    var o = document.getElementById('xr-acct-ov');
+    if (o) o.parentNode.removeChild(o);
+    if (walled()) { open(true); return; }           // signed out (or account deleted): straight back to the sign-in card
+    update();
+  }
 
   function open(welcome) {
     css();
-    close();
+    var old = document.getElementById('xr-acct-ov');   // not close(): with no account close() reopens the card
+    if (old) old.parentNode.removeChild(old);
     var t = T();
     var ov = el('div', { id: 'xr-acct-ov', dir: lang() === 'ar' ? 'rtl' : 'ltr', lang: lang() });
     var c = el('div', { 'class': 'c', role: 'dialog', 'aria-modal': 'true', 'aria-label': t.title });
     ov.appendChild(c);
-    ov.addEventListener('mousedown', function (e) { if (e.target === ov && !welcome) close(); });
-    ov.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    var wall = walled();
+    if (wall) { ov.setAttribute('data-wall', '1'); ov.style.background = '#eef3f4'; }
+    ov.addEventListener('mousedown', function (e) { if (e.target === ov && !welcome && !wall) close(); });
+    ov.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !wall) close(); });
     document.body.appendChild(ov);
     var a = info();
     if (a) signedIn(c, a); else signedOut(c, welcome);
@@ -218,9 +230,11 @@
     var priv = el('div', { 'class': 'foot' });
     var link = el('a', { href: PRIVACY, target: '_blank', rel: 'noopener', id: 'xr-acct-privacy' }, t.privacy);
     priv.appendChild(link); c.appendChild(priv);
-    var skip = el('button', { type: 'button', id: welcome ? 'xr-acct-skip' : 'xr-acct-close', 'class': 'ln' }, welcome ? t.skip : t.close);
-    skip.onclick = close;
-    c.appendChild(skip);
+    if (!walled()) {                                // required account: no "continue without" and no close
+      var skip = el('button', { type: 'button', id: welcome ? 'xr-acct-skip' : 'xr-acct-close', 'class': 'ln' }, welcome ? t.skip : t.close);
+      skip.onclick = close;
+      c.appendChild(skip);
+    }
     setTimeout(function () { mail.focus(); }, 50);
   }
 
@@ -307,6 +321,7 @@
   function update() {
     if (!document.body) return;
     css();
+    if (walled() && !document.getElementById('xr-acct-ov')) { open(true); return; }   // nothing opens without an account
     if (isEditor) editorButton(); else startPill();
   }
   // the editors' own account menu ("My account" / "Sign out") goes to the Windows shell - answer it here
@@ -320,10 +335,10 @@
   function start() {
     update();
     setInterval(update, 800);
-    if (isEditor) return;
+    if (isEditor) { if (walled()) open(true); return; }
     refresh().then(function (a) {
       update();
-      if (!a && !ls(K_WELCOME)) { ls(K_WELCOME, '1'); open(true); }   // once: the optional account
+      if (!a) { ls(K_WELCOME, '1'); if (!document.getElementById('xr-acct-ov')) open(true); }
     });
   }
   window.XreroAccount = { open: open, refresh: refresh, signOut: signOut };

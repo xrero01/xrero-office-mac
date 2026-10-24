@@ -169,6 +169,16 @@ async def main():
             ok("four_app_cards", tiles and tiles.get("n") == 4 and tiles.get("whole") and not tiles.get("scroll")
                and tiles.get("labels") == ["DOCX", "XLSX", "PPTX", "PDF"], json.dumps(tiles))
             await pg.shot("01e-start-four-apps")
+            # About in the sidebar (as on Windows): opens the About window with the Mac app's version
+            ab = await pg.ev("""new Promise(function(done){var a=document.querySelector('.tool-menu a[action="about"]');
+              if(!a){done({item:false});return;} var li=a.closest('li'); var vis=getComputedStyle(li).display!=='none';
+              a.click(); setTimeout(function(){var d=document.querySelector('dialog.dlg-about');
+                var t=d?d.innerText:''; var r={item:vis, open:!!(d&&d.open), name:/Xrero Office/.test(t), version:(t.match(/\d+\.\d+[^
+]*Apple silicon[^
+]*/)||[''])[0],
+                  agpl:/AGPL/.test(t), source:/Source|المصدرية/.test(t)};
+                try{d.close();}catch(e){} done(r);},1200);})""")
+            ok("about_in_sidebar", ab and ab.get("item") and ab.get("open") and ab.get("name") and ab.get("version") and ab.get("agpl") and ab.get("source"), json.dumps(ab, ensure_ascii=False))
             screencap("01e-start-four-apps")
         # open a document the way Finder does
         doc = os.path.join(OUT, "ui-test-%s.docx" % ARCH)

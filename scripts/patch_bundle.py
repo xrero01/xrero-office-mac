@@ -177,10 +177,14 @@ log("editors replaced; snapshots removed")
 # EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share) - on Mac they would be dead buttons.
 # The Mac UI language follows macOS (or the start page's Settings). The account chip + menu stay: web/xr-account.js
 # (appended below) answers them on Mac.
-# the optional Xrero account (sign in / create / sign out / delete) - web/xr-account.js, start page + editors
+# the Xrero account (REQUIRED since 24 Oct 2026, like Windows: sign in / create / sign out / delete) - web/xr-account.js,
+# start page + editors; the four apps as large start-page tiles - web/xr-home.js
 ACCT_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "xr-account.js"), encoding="utf-8").read()
 if "/*XR-ACCT-START*/" not in ACCT_JS or "/*XR-ACCT-END*/" not in ACCT_JS:
     raise SystemExit("web/xr-account.js markers missing")
+HOME_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "xr-home.js"), encoding="utf-8").read()
+if "/*XR-HOME-START*/" not in HOME_JS or "/*XR-HOME-END*/" not in HOME_JS:
+    raise SystemExit("web/xr-home.js markers missing")
 MAC_JS = r"""
 /*XR-MAC-START*/
 (function(){
@@ -208,15 +212,17 @@ log("mac header shim + Xrero account appended to app.js")
 login = os.path.join(RES, "login", "index.html")
 s = open(os.path.join(PAYLOAD, "login", "index.html"), encoding="utf-8").read()
 n0 = len(s)
-# the sign-in wall waits for the Windows shell's answer - on Mac nobody answers and it would never unlock; the Mac gets
-# the OPTIONAL account instead (App Store 5.1.1: an account must not be required for features that do not need one)
-s, n_wall = re.subn(r'<script id="xrero-wall">.*?</script>\s*', lambda m: '<script id="xrero-account">' + ACCT_JS + '</script>\n', s, flags=re.S)
+# the Windows sign-in wall waits for the Windows shell's answer - on Mac nobody answers and it would never unlock; the
+# Mac gets its own required account card (web/xr-account.js, talks to xrero.com itself) + the four app tiles
+s, n_wall = re.subn(r'<script id="xrero-wall">.*?</script>\s*',
+                    lambda m: '<script id="xrero-account">' + ACCT_JS + '</script>\n<script id="xrero-home">' + HOME_JS + '</script>\n',
+                    s, flags=re.S)
 # "Open PDF as DOCX..." needs the Windows PDF converter
 s, n_conv = re.subn(r"function addConvertItem\(\)\s*\{", "function addConvertItem(){ if (/Mac/i.test(navigator.platform||'')) return true;", s)
 if n_wall != 1 or n_conv != 1:
     raise SystemExit("start page anchors not found (wall=%d convert=%d)" % (n_wall, n_conv))
 open(login, "w", encoding="utf-8").write(s)
-log("start page: wall -> optional account, convert item disabled (%d -> %d chars)" % (n0, len(s)))
+log("start page: wall -> Xrero account (required) + four app tiles, convert item disabled (%d -> %d chars)" % (n0, len(s)))
 
 # ---------------------------------------------------------------- leftovers report
 left = []

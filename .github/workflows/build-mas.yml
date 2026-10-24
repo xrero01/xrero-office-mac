@@ -20,7 +20,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 120
     env:
-      V: "20.1"
+      V: "20.2"
       PAYLOAD: "payload-20.0.9"
       TEAM_ID: "Y5U46S55X5"      # Apple team (Developer ID certificate subject); checked against the API in the signing step
       GH_TOKEN: ${{ github.token }}

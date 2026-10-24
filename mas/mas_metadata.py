@@ -13,7 +13,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 TEXT = {
     "en-US": {
-        "description": """Xrero Office is a free office suite for documents, spreadsheets and presentations - built Arabic-first and working fully offline on your Mac.
+        "description": """Xrero Office is a free office suite for documents, spreadsheets and presentations - built Arabic-first, with editing that runs on your Mac.
 
 OPEN AND EDIT THE FILES YOU ALREADY HAVE
 - Documents (.docx), spreadsheets (.xlsx) and presentations (.pptx), plus PDF viewing
@@ -31,14 +31,14 @@ A FULL EDITOR, NOT A VIEWER
 - Tabs: several documents open in one window
 
 PRIVATE BY DESIGN
-- Your files stay on your Mac - no account needed, no tracking
-- Works without an internet connection
+- Your files stay on your Mac - a free Xrero account, no tracking
+- Works without an internet connection after the first sign-in
 
 Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""",
-        "promotionalText": "Free, offline and Arabic-first. Open, edit and save .docx, .xlsx and .pptx files on your Mac. No account needed.",
+        "promotionalText": "Free and Arabic-first: Documents, Spreadsheets, Presentations and PDF in one app. Open, edit and save Office files on your Mac.",
     },
     "ar-SA": {
-        "description": """أوفيس Xrero حزمة مكتبية مجانية للمستندات والجداول والعروض التقديمية، مصممة للعربية أولاً وتعمل بالكامل دون إنترنت على جهاز الماك.
+        "description": """أوفيس Xrero حزمة مكتبية مجانية للمستندات والجداول والعروض التقديمية، مصممة للعربية أولاً، والتحرير يتم على جهاز الماك نفسه.
 
 افتح ملفاتك وعدّلها
 - المستندات (.docx) والجداول (.xlsx) والعروض التقديمية (.pptx) وعرض ملفات PDF
@@ -56,11 +56,11 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
 - تبويبات: عدة مستندات مفتوحة في نافذة واحدة
 
 الخصوصية أولاً
-- ملفاتك تبقى على جهازك: بلا حساب وبلا تتبّع
-- يعمل دون اتصال بالإنترنت
+- ملفاتك تبقى على جهازك: حساب Xrero مجاني وبلا تتبّع
+- يعمل دون اتصال بالإنترنت بعد أول تسجيل دخول
 
 أوفيس Xrero برنامج مجاني ومفتوح المصدر (AGPL-3.0) مبني على ONLYOFFICE.""",
-        "promotionalText": "مجاني ويعمل دون إنترنت ومصمم للعربية أولاً. افتح ملفات docx وxlsx وpptx وعدّلها واحفظها على الماك. بلا حساب.",
+        "promotionalText": "مجاني ومصمم للعربية أولاً: المستندات والجداول والعروض وPDF في تطبيق واحد. افتح ملفات أوفيس وعدّلها واحفظها على الماك.",
     },
 }
 SHOTS = {"en-US": ["mac_en_start.png", "mac_en_editor.png"], "ar-SA": ["mac_ar_start.png", "mac_ar_editor.png"]}
@@ -68,11 +68,15 @@ SHOTS = {"en-US": ["mac_en_start.png", "mac_en_editor.png"], "ar-SA": ["mac_ar_s
 NOTES = """XRERO OFFICE FOR MAC - APP REVIEW INFORMATION
 
 PURPOSE AND AUDIENCE
-Xrero Office is a free, open-source office suite (documents, spreadsheets, presentations) for Mac, iPhone and iPad. It is made for Arabic-speaking users, mainly in the United Arab Emirates and the Gulf, and for anyone who needs to open, edit and save Microsoft Office files (.docx, .xlsx, .pptx) with correct right-to-left Arabic. No account, no subscription, no in-app purchases.
+Xrero Office is a free, open-source office suite (documents, spreadsheets, presentations) for Mac, iPhone and iPad. It is made for Arabic-speaking users, mainly in the United Arab Emirates and the Gulf, and for anyone who needs to open, edit and save Microsoft Office files (.docx, .xlsx, .pptx) with correct right-to-left Arabic. A free Xrero account is required (the same account as Xrero Office for Windows and iPhone); no subscription, no in-app purchases.
 
-HOW TO USE (no login)
-1. Launch the app: the start page opens (Home, Open local file, Templates).
-2. Click Document, Spreadsheet or Presentation to create a file, or Open local file / drag a .docx, .xlsx or .pptx file onto the window.
+SIGN-IN (demo account in the App Review fields)
+1. Launch the app: the Xrero account card opens. Sign in with the demo account, or create a new account in the app (Create account tab: name, email, password).
+2. The account can be deleted inside the app: click the account name (top corner of the start page) > Delete account. The privacy policy is linked on the card.
+
+HOW TO USE
+1. The start page shows the four apps as large tiles: Documents, Spreadsheets, Presentations and PDF.
+2. Click a tile to create a file (PDF opens a PDF from the Mac), or Open local file / drag a .docx, .xlsx or .pptx file onto the window.
 3. Edit with the toolbar (bold, fonts, alignment, right-to-left paragraphs, tables, formulas, slides) and save with Command-S. Each document opens in a tab.
 Sample files: https://github.com/xrero01/xrero-office-ios/tree/main/store/samples
 
@@ -80,7 +84,7 @@ THIS MAC VERSION
 The Mac app is the ONLYOFFICE Desktop Editors 9.4.0 app (AGPL-3.0) with the Xrero interface, sandboxed for the Mac App Store. It has no self-updater (updates come only from the App Store). Apple silicon Macs, macOS 12 or later.
 
 EXTERNAL SERVICES
-None are needed: editing and file conversion run on the Mac. Optional features contact a service only when the user chooses to: connecting the app to the user's own document server (ownCloud, Nextcloud) from the start page, and editor plugins that the user opens (for example an AI assistant plugin, which works only with the user's own provider key). There is no analytics, advertising or tracking.
+Sign-in uses xrero.com (https://xrero.com/office/api, email and password only, no third-party sign-in). Editing and file conversion run on the Mac. Optional features contact a service only when the user chooses to: connecting the app to the user's own document server (ownCloud, Nextcloud) from the start page, and editor plugins that the user opens (for example an AI assistant plugin, which works only with the user's own provider key). There is no analytics, advertising or tracking.
 
 REGIONAL DIFFERENCES
 None. The app works the same in all regions; the interface is available in English and Arabic.
@@ -169,7 +173,8 @@ def screenshots(locs):
 def review(mac, ios):
     src = call("GET", "/v1/appStoreVersions/%s/appStoreReviewDetail" % ios["id"])["data"]["attributes"]
     a = {k: src.get(k) for k in ("contactFirstName", "contactLastName", "contactPhone", "contactEmail") if src.get(k)}
-    a.update({"demoAccountRequired": False, "notes": NOTES})
+    # 20.2: the account is required - the demo account name + password are set in App Store Connect (never in this repo)
+    a.update({"demoAccountRequired": True, "notes": NOTES})
     try:
         cur = call("GET", "/v1/appStoreVersions/%s/appStoreReviewDetail" % mac["id"])["data"]
     except SystemExit:

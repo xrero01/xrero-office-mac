@@ -75,8 +75,8 @@ SIGN-IN (demo account in the App Review fields)
 2. The account can be deleted inside the app: click the account name (top corner of the start page) > Delete account. The privacy policy is linked on the card.
 
 HOW TO USE
-1. The start page shows the four apps as large tiles: Documents, Spreadsheets, Presentations and PDF.
-2. Click a tile to create a file (PDF opens a PDF from the Mac), or Open local file / drag a .docx, .xlsx or .pptx file onto the window.
+1. The start page shows the four apps as cards: Document, Spreadsheet, Presentation and PDF.
+2. Click a card to create a file, or Open local file / drag a .docx, .xlsx, .pptx or .pdf file onto the window.
 3. Edit with the toolbar (bold, fonts, alignment, right-to-left paragraphs, tables, formulas, slides) and save with Command-S. Each document opens in a tab.
 Sample files: https://github.com/xrero01/xrero-office-ios/tree/main/store/samples
 

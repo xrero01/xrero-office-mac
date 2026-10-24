@@ -155,12 +155,16 @@ async def main():
             await asyncio.sleep(1.5)
             pill = await pg.ev("(document.getElementById('xr-acct-start')||{}).textContent||''")
             ok("account_signed_in_pill", pill == "Mac Store Check", repr(pill))
-            # the four apps as large tiles; the small create row is hidden
-            tiles = await pg.ev("""(function(){var ids=['word','cell','slide','pdf'];var o={};ids.forEach(function(k){
-              var b=document.getElementById('xr-home-'+k);o[k]=b?[b.textContent,Math.round(b.getBoundingClientRect().height)]:null;});
-              var g=document.getElementById('area-document-creation-grid');o.small=g?getComputedStyle(g).display:'absent';return o;})()""")
-            ok("four_app_tiles", tiles and all(tiles.get(k) and tiles[k][1] >= 120 for k in ("word", "cell", "slide", "pdf"))
-               and tiles.get("small") in ("none", "absent"), json.dumps(tiles, ensure_ascii=False))
+            # the four apps = the start page's own cards, as on Windows (DOCX, XLSX, PPTX, PDF): all four whole, no scroll bar
+            tiles = await pg.ev("""(function(){var g=document.getElementById('area-document-creation-grid');
+              var its=[].slice.call(document.querySelectorAll('#area-document-creation-grid .document-creation-item'));
+              var gr=g?g.getBoundingClientRect():{right:0};
+              return {n:its.length, labels:its.map(function(e){return (e.querySelector('.format-label')||{}).textContent.trim();}),
+                whole:its.every(function(e){var r=e.getBoundingClientRect();return r.width>100&&r.right<=gr.right+1;}),
+                rows:its.map(function(e){return Math.round(e.getBoundingClientRect().top);}).filter(function(v,i,a){return a.indexOf(v)===i;}).length,
+                scroll:g?g.scrollWidth>g.clientWidth+1:true};})()""")
+            ok("four_app_cards", tiles and tiles.get("n") == 4 and tiles.get("whole") and not tiles.get("scroll")
+               and tiles.get("labels") == ["DOCX", "XLSX", "PPTX", "PDF"], json.dumps(tiles))
             await pg.shot("01e-start-four-apps")
             screencap("01e-start-four-apps")
         # open a document the way Finder does

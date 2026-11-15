@@ -177,8 +177,10 @@ async def main():
                   % (json.dumps(test_mail), json.dumps(test_pw)))
                 ok("account_create_opens_app", made == "open", repr(made))
             await asyncio.sleep(1.5)
-            pill = await pg.ev("(document.getElementById('xr-acct-start')||{}).textContent||''")
-            ok("account_signed_in_pill", pill == "Mac Store Check", repr(pill))
+            # the pill = the account's initials (teal circle) + its name
+            pill = await pg.ev("""(function(){var p=document.getElementById('xr-acct-start');if(!p)return '';
+              return [(p.querySelector('.av')||{}).textContent||'', (p.querySelector('.nm')||{}).textContent||''].join('|');})()""")
+            ok("account_signed_in_pill", pill == "MC|Mac Store Check", repr(pill))
             # the four apps = the start page's own cards, as on Windows (DOCX, XLSX, PPTX, PDF): all four whole, no scroll bar
             tiles = await pg.ev("""(function(){var g=document.getElementById('area-document-creation-grid');
               var its=[].slice.call(document.querySelectorAll('#area-document-creation-grid .document-creation-item'));

@@ -7,7 +7,8 @@ payload dir (from the Windows release payload, same 9.4.0 web build):
     editors/{sdkjs,web-apps,sdkjs-plugins,webext}   Xrero-branded web layer incl. the 20.0.9 Arabic PDF fix
     login/index.html                                 Xrero start page
     assets/icons/*.icns                              (repo) app + document icons, copied in by build_mac.sh
-    assets/xrero-icon-1024.png                       (repo) start-tab logo source (tab_logo.swift)
+    assets/icons/small/*.png                         (repo) title-bar pictures: start-tab logo + document tab icons
+                                                     (scripts/make_icons.py -> tab_logo.swift)
 """
 import glob, os, plistlib, re, shutil, sys
 
@@ -101,6 +102,16 @@ BIN_SWAPS = [
     # start-tab logo: the asset catalog's ONLYOFFICE artwork -> Xrero files in Resources (made by tab_logo.swift)
     (b"logo-tab-light\0", b"xrero-tab-lite\0"),
     (b"logo-tab-dark\0", b"xrero-tabdark\0"),
+    # the document tabs' kind icons (16 Nov 2026): the stock blue page -> the Xrero kit's Doc / Sheet / Slide / PDF
+    # pictures (xrero_tab_*.tiff, made by tab_logo.swift); 've' (diagrams) keeps its own
+    (b"icon_tabs_de_active\0", b"xrero_tab_de_active\0"),
+    (b"icon_tabs_de_inactive\0", b"xrero_tab_de_inactive\0"),
+    (b"icon_tabs_se_active\0", b"xrero_tab_se_active\0"),
+    (b"icon_tabs_se_inactive\0", b"xrero_tab_se_inactive\0"),
+    (b"icon_tabs_pe_active\0", b"xrero_tab_pe_active\0"),
+    (b"icon_tabs_pe_inactive\0", b"xrero_tab_pe_inactive\0"),
+    (b"icon_tabs_pdf_active\0", b"xrero_tab_pdf_active\0"),
+    (b"icon_tabs_pdf_inactive\0", b"xrero_tab_pdf_inactive\0"),
     # no analytics to Google under Xrero's name: an RFC 6761 .invalid host never resolves
     (b"google-analytics.com", b"xrerooffline.invalid"),
     (b"https://onlyoffice.com/desktopeditors.aspx\0", None),
@@ -141,6 +152,84 @@ for nib in nibs:
         log("storyboard logo:", os.path.relpath(nib, RES), n)
 if nib_hits == 0:
     raise SystemExit("storyboard tab logo reference not found")
+
+
+# The title bar's download indicator (16 Nov 2026, found in the Arabic store pictures): its box is 0 points wide while
+# nothing downloads, but the 30-point image view inside it is drawn anyway - views no longer clip to their bounds by
+# default on macOS 14+. Left to right the box sits at the window's right edge and the image falls outside the window;
+# right to left the box moves to the left edge and the image (a grey square with a blue bar) shows in the title bar.
+# Fix: the box clips to its bounds (the storyboard's own IBNSClipsToBounds flag, 0 -> 1, same length). While a download
+# runs the box is 30 points wide and the indicator shows as before.
+def nib_values(b):
+    """NIBArchive: [(object class, [(key, type, value, value offset)])]"""
+    import struct
+    if b[:10] != b"NIBArchive":
+        return None
+    _, _, oc, oo, kc, ko, vc, vo, cc, co = struct.unpack("<10I", b[10:50])
+
+    def varint(p):
+        v = s = 0
+        while True:
+            x = b[p]; p += 1
+            v |= (x & 0x7f) << s; s += 7
+            if x & 0x80:
+                return v, p
+    keys, p = [], ko
+    for _ in range(kc):
+        n, p = varint(p); keys.append(b[p:p + n].decode("latin1")); p += n
+    classes, p = [], co
+    for _ in range(cc):
+        n, p = varint(p); ex, p = varint(p); p += 4 * ex
+        classes.append(b[p:p + n].rstrip(b"\0").decode("latin1")); p += n
+    size = {0: 1, 1: 2, 2: 4, 3: 8, 4: 0, 5: 0, 6: 4, 7: 8, 9: 0, 10: 4}
+    vals, p = [], vo
+    for _ in range(vc):
+        k, p = varint(p); t = b[p]; p += 1
+        if t == 8:
+            n, p = varint(p); v = b[p:p + n]; at = p; p += n
+        else:
+            at = p; v = b[p:p + size[t]]; p += size[t]
+            if t == 10:
+                v = struct.unpack("<I", v)[0]
+        vals.append((keys[k], t, v, at))
+    objs, p = [], oo
+    for _ in range(oc):
+        c, p = varint(p); vi, p = varint(p); n, p = varint(p)
+        objs.append((classes[c], vals[vi:vi + n]))
+    return objs
+
+
+clip_hits = 0
+for nib in nibs:
+    b = bytearray(open(nib, "rb").read())
+    if b"downloadBackgroundView" not in b:
+        continue
+    objs = nib_values(bytes(b))
+    if not objs:
+        continue
+
+    def field(i, key):
+        return next((v for k, t, v, at in objs[i][1] if k == key), None)
+
+    def string(i):
+        v = field(i, "NS.bytes")
+        return v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else None
+    for c, vs in objs:
+        if c != "NSNibOutletConnector":
+            continue
+        d = dict((k, v) for k, t, v, at in vs)
+        if not isinstance(d.get("NSLabel"), int) or string(d["NSLabel"]) != "downloadBackgroundView":
+            continue
+        box = d["NSDestination"]
+        flag = [(t, at) for k, t, v, at in objs[box][1] if k == "IBNSClipsToBounds"]
+        if len(flag) != 1 or flag[0][0] != 0:
+            raise SystemExit("download box: no int8 IBNSClipsToBounds in " + nib)
+        b[flag[0][1]] = 1
+        clip_hits += 1
+    open(nib, "wb").write(bytes(b))
+log("title bar download box clips to its bounds:", clip_hits)
+if clip_hits == 0:
+    raise SystemExit("title bar download box (downloadBackgroundView) not found in the storyboard")
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)
 VALUE = re.compile(r'(=\s*")((?:[^"\\]|\\.)*)(")')
@@ -215,6 +304,38 @@ for css in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "resources
         n_hdr += 1
 log("editor header colour -> Xrero teal in", n_hdr, "stylesheets")
 
+# Arabic wording in the editors (16 Nov 2026, store-picture review; Mac bundle only, the Windows payload is unchanged):
+#  - status bar "Word count": "تعداد الكلمات" (enumeration of the words) -> "عدد الكلمات"
+#  - the AI ribbon tab (AI plugin: buttonMainToolbar.text = "AI", shown through the plugin's own translation table,
+#    which has no "AI" entry for Arabic) -> "الذكاء الاصطناعي", as the editors' own Arabic text already says
+import json
+n_ar = 0
+for f in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "locale", "ar.json")):
+    t = open(f, encoding="utf-8").read()
+    t2 = t.replace('"تعداد الكلمات"', '"عدد الكلمات"')
+    if t2 != t:
+        open(f, "w", encoding="utf-8").write(t2)
+        n_ar += 1
+AI_AR = "الذكاء الاصطناعي"
+for f in glob.glob(os.path.join(E, "sdkjs-plugins", "*", "translations", "ar-SA.json")):
+    plug = os.path.dirname(os.path.dirname(f))
+    try:
+        cfg = json.load(open(os.path.join(plug, "config.json"), encoding="utf-8"))
+    except Exception:
+        continue
+    if cfg.get("name") != "AI":
+        continue
+    tr = json.load(open(f, encoding="utf-8"))
+    tr["AI"] = AI_AR
+    json.dump(tr, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    cfg.setdefault("nameLocale", {})["ar-SA"] = AI_AR
+    cfg["nameLocale"]["ar"] = AI_AR
+    json.dump(cfg, open(os.path.join(plug, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    n_ar += 1
+log("Arabic wording (word count, AI tab):", n_ar, "files")
+if n_ar < 2:
+    raise SystemExit("Arabic wording: expected the documenteditor ar.json and the AI plugin, changed %d" % n_ar)
+
 # Hide the Xrero header controls that call Windows-only native commands (PDF->Word converter, Designs dialog,
 # EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share) - on Mac they would be dead buttons.
 # The Mac UI language follows macOS (or the start page's Settings). The account chip + menu stay: web/xr-account.js
@@ -232,7 +353,9 @@ MAC_JS = r"""
 /*XR-MAC-START*/
 (function(){
   if (!/Mac/i.test(navigator.platform || '')) return;
-  var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-designs-launch,#xr-design-ov{display:none!important}';
+  var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-designs-launch,#xr-design-ov{display:none!important}' +
+    // the account chip's initials in the Mac system font (its Windows face is Segoe UI, absent on a Mac)
+    '#xr-hdr-btns .xr-ava{font:600 10.5px/24px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif!important;letter-spacing:.2px}';
   function add(){
     if (document.getElementById('xr-mac-css')) return;
     var s = document.createElement('style'); s.id = 'xr-mac-css'; s.textContent = css;

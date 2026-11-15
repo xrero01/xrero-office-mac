@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""store_demo.py [out.docx]  (python-docx; run on any machine, the result is committed as mas/store_demo.docx)
+"""store_demo.py [out dir]  (python-docx; run on any machine, the results are committed next to this file)
 
-The neutral sample document the Mac App Store pictures show (mas/store_capture.py opens it as "Quarterly report.docx"
-in the English app and as "التقرير الربعي.docx" in the Arabic app): a bilingual UAE business report with an English
-title, an Arabic right-to-left heading + paragraph, an English bullet list and a small Arabic right-to-left table.
-No customer names, no money amounts, no test strings. Fonts that every Mac has (Helvetica Neue; Arial for Arabic)."""
+The neutral sample documents the Mac App Store pictures show (mas/store_capture.py opens them from Finder):
+  store_demo.docx     English app, as "Q3 report.docx"
+  store_demo_ar.docx  Arabic app, as "التقرير الربعي.docx"
+16 Nov 2026 (store-picture review): the pictures' headline is "Real Arabic, right to left", so Arabic leads the page
+in both: an Arabic title (28 pt) and summary (14 pt), an Arabic numbered list, then a short English list - the
+bilingual part. The second line is English in the English file and Arabic in the Arabic one. All of it is laid out
+right to left by the editor itself (bidi paragraphs, bidi numbering) - no right-to-left table: the editor engine draws
+every table left to right (it has no w:bidiVisual), so a table would only look right-to-left by storing its columns
+backwards. No customer names, no money amounts, no test strings. Fonts that every Mac has: Helvetica Neue (Latin),
+Geeza Pro (Arabic - heavier than Arial's Arabic at these sizes)."""
 import os, sys
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -12,9 +18,9 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "store_demo.docx")
-LATIN, ARABIC = "Helvetica Neue", "Arial"
-INK, TEAL, GREY, WHITE = RGBColor(0x0B, 0x3F, 0x4B), RGBColor(0x05, 0x85, 0xA1), RGBColor(0x5B, 0x6B, 0x70), RGBColor(0xFF, 0xFF, 0xFF)
+OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
+LATIN, ARABIC = "Helvetica Neue", "Geeza Pro"
+INK, TEAL, GREY = RGBColor(0x0B, 0x3F, 0x4B), RGBColor(0x05, 0x85, 0xA1), RGBColor(0x5B, 0x6B, 0x70)
 
 
 def el(tag, **attrs):
@@ -64,7 +70,8 @@ def run(p, text, size=11, bold=False, color=None, rtl=False):
     put(rPr, el("w:szCs", val=str(int(size * 2))), RPR_AFTER_SZ)
     if rtl:
         put(rPr, el("w:rtl"), RPR_AFTER_RTL)
-    put(rPr, el("w:lang", val="en-US", bidi="ar-AE"), RPR_AFTER_LANG)
+    # Arabic text says it is Arabic (the status bar shows the language at the caret: the pictures put it here)
+    put(rPr, el("w:lang", val="ar-AE" if rtl else "en-US", bidi="ar-AE"), RPR_AFTER_LANG)
     return r
 
 
@@ -79,73 +86,61 @@ def para(container, rtl=False, before=0, after=6, align=None, style=None):
     return p
 
 
-def shade(cell, fill):
-    put(cell._tc.get_or_add_tcPr(), el("w:shd", val="clear", color="auto", fill=fill),
-        ["noWrap", "tcMar", "textDirection", "tcFitText", "vAlign", "hideMark"])
+SUMMARY = ("يستعرض هذا التقرير أبرز ما أنجزته فرق العمل في دبي وأبوظبي والشارقة خلال الربع الثالث، "
+           "ويحدد أولويات العمل للربع القادم. أُعدّ التقرير باللغتين العربية والإنجليزية في مستند واحد.")
 
 
-d = Document()
-for s in d.sections:                       # A4
-    s.page_width, s.page_height = Cm(21.0), Cm(29.7)
-    s.left_margin = s.right_margin = Cm(2.3)
-    s.top_margin, s.bottom_margin = Cm(1.3), Cm(2.0)   # the whole table fits the editor window of the pictures
-normal = d.styles["Normal"]
-normal.font.size = Pt(11)
-fonts(normal.element.get_or_add_rPr())
+def make(path, second_line_ar):
+    d = Document()
+    for s in d.sections:                       # A4
+        s.page_width, s.page_height = Cm(21.0), Cm(29.7)
+        s.left_margin = s.right_margin = Cm(2.3)
+        s.top_margin, s.bottom_margin = Cm(1.3), Cm(2.0)   # the whole page top fits the editor window of the pictures
+    normal = d.styles["Normal"]
+    normal.font.size = Pt(11)
+    fonts(normal.element.get_or_add_rPr())
 
-# English title + the line under it
-p = para(d, after=2)
-run(p, "Quarterly Report", 24, True, INK)
-p = para(d, after=10)
-# (English words only from the spelling dictionary: the editor underlines Latin-script city names it does not know,
-# and it does not read w:noProof - the cities are named in the Arabic text and table)
-run(p, "Q3 2026  ·  United Arab Emirates", 12, False, GREY)
+    # Arabic title + the line under it
+    p = para(d, rtl=True, after=2)
+    run(p, "التقرير الربعي", 28, True, INK, rtl=True)
+    p = para(d, rtl=True, after=12)
+    if second_line_ar:
+        run(p, "الربع الثالث 2026  ·  الإمارات العربية المتحدة", 13, False, GREY, rtl=True)
+    else:
+        # (English words only from the spelling dictionary: the editor underlines Latin-script city names it does not
+        # know, and it does not read w:noProof - the cities are named in the Arabic text)
+        run(p, "Quarterly Report  ·  Q3 2026  ·  United Arab Emirates", 13, False, GREY)
 
-# Arabic heading + paragraph (right to left)
-p = para(d, rtl=True, after=4)
-run(p, "ملخص الربع الثالث", 14, True, TEAL, rtl=True)
-p = para(d, rtl=True, after=9)
-p.paragraph_format.line_spacing = 1.15
-run(p, "يستعرض هذا التقرير أبرز ما أنجزته فرق العمل في دبي وأبوظبي والشارقة خلال الربع الثالث، "
-       "ويحدد أولويات العمل للربع القادم. أُعدّ التقرير باللغتين العربية والإنجليزية في مستند واحد.", 12, rtl=True)
+    # Arabic summary (the pictures put the caret in this paragraph)
+    p = para(d, rtl=True, after=4)
+    run(p, "ملخص الربع الثالث", 18, True, TEAL, rtl=True)
+    p = para(d, rtl=True, after=10)
+    p.paragraph_format.line_spacing = 1.15
+    run(p, SUMMARY, 14, rtl=True)
 
-# English bullet list
-p = para(d, after=4)
-run(p, "Highlights", 14, True, TEAL)
-for t in ("A new office opened this quarter",
-          "29 projects delivered across three emirates",
-          "One bilingual template for Arabic and English documents"):
-    p = para(d, after=2, style="List Bullet")
-    run(p, t, 11.5)
+    # Arabic numbered list (right to left, the editor's own numbering)
+    p = para(d, rtl=True, after=4)
+    run(p, "أبرز النتائج", 16, True, TEAL, rtl=True)
+    for t in ("افتتاح مكتب جديد في الشارقة",
+              "تسليم 29 مشروعًا في ثلاث إمارات",
+              "قالب واحد للمستندات العربية والإنجليزية"):
+        p = para(d, rtl=True, after=3, style="List Number")
+        run(p, t, 14, rtl=True)
 
-# Arabic table (right to left)
-p = para(d, rtl=True, before=6, after=4)
-run(p, "المشاريع حسب المكتب", 14, True, TEAL, rtl=True)
-# The editor engine draws every table left to right (it has no w:bidiVisual), so the columns are stored in visual
-# order: the first column (المكتب) is the right-most one, as an Arabic reader expects - in any word processor.
-rows = [tuple(reversed(r)) for r in (("المكتب", "المشاريع المنجزة", "الحالة"),
-                                     ("دبي", "14", "ضمن الخطة"),
-                                     ("أبوظبي", "9", "ضمن الخطة"),
-                                     ("الشارقة", "6", "مكتب جديد"))]
-t = d.add_table(rows=len(rows), cols=3)
-tblPr = t._tbl.tblPr
-b = el("w:tblBorders")
-for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
-    b.append(el("w:" + side, val="single", sz="6", space="0", color="C9DCE0"))
-put(tblPr, b, ["shd", "tblLayout", "tblCellMar", "tblLook"])
-for i, row in enumerate(rows):
-    for j, text in enumerate(row):
-        c = t.cell(i, j)
-        c.width = Cm(5.46)
-        c._tc.remove(c.paragraphs[0]._p)
-        cp = para(c, rtl=True, before=2, after=2, align=WD_ALIGN_PARAGRAPH.CENTER if j == 1 else None)
-        run(cp, text, 11.5, bold=(i == 0), color=WHITE if i == 0 else INK, rtl=True)
-        if i == 0:
-            shade(c, "0585A1")
-        elif i % 2 == 0:
-            shade(c, "EEF6F7")
+    # English list (left to right): the same report in its second language
+    p = para(d, before=8, after=4)
+    run(p, "Highlights", 14, True, TEAL)
+    for t in ("A new office opened this quarter",
+              "29 projects delivered across three emirates",
+              "One bilingual template for Arabic and English documents"):
+        p = para(d, after=2, style="List Bullet")
+        run(p, t, 11.5)
 
-cp = d.core_properties
-cp.title, cp.author, cp.last_modified_by, cp.comments, cp.subject, cp.keywords = "Quarterly Report", "Xrero", "Xrero", "", "", ""
-d.save(OUT)
-print("wrote", OUT)
+    cp = d.core_properties
+    cp.title, cp.author, cp.last_modified_by, cp.comments, cp.subject, cp.keywords = "التقرير الربعي", "Xrero", "Xrero", "", "", ""
+    d.save(path)
+    print("wrote", path)
+
+
+make(os.path.join(OUT, "store_demo.docx"), second_line_ar=False)
+make(os.path.join(OUT, "store_demo_ar.docx"), second_line_ar=True)

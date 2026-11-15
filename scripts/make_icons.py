@@ -13,7 +13,11 @@ and writes (all committed, so the macOS build only copies them):
     assets/icons/xr-slide.icns       presentation files  <- slides-*-1024.png
     assets/icons/xr-pdf.icns         PDF files           <- pdf-*-1024.png
     assets/icons/preview/*.png       512 px previews of each (for review only)
-    web/xr-home.js                   the start page tile pictures (KIND block, 200 px WebP data URIs)
+    web/xr-home.js                   the start page tile pictures (KIND block, 200 px WebP data URIs) and the
+                                     small plain pictures of the Recent list (KIND_PLAIN, 64 px)
+    assets/icons/small/*.png         small plain pictures, icon body only (no grid margin): the title-bar tab icons
+                                     (tab-doc / tab-sheet / tab-slide / tab-pdf) and the start tab's app icon (tab-app),
+                                     drawn into the bundle by scripts/tab_logo.swift
 
 "named" artwork (small word Office/Doc/Sheet/Slide/PDF) is used above 32 px, "plain" at 32 px and below.
 """
@@ -88,11 +92,27 @@ def write_icns(path, named, plain):
     open(path, "wb").write(b"icns" + struct.pack(">I", len(chunks) + 8) + chunks)
 
 
+def body(art, px):
+    """the plain artwork as a small picture: the rounded icon body alone (no grid margin, no shadow), px x px"""
+    art = art.convert("RGB").resize((BODY, BODY), Image.LANCZOS)
+    out = Image.new("RGBA", (BODY, BODY), (0, 0, 0, 0))
+    out.paste(art, (0, 0), MASK)
+    return out.resize((px, px), Image.LANCZOS)
+
+
 SETS = [("office", "AppIcon"), ("writer", "xr-doc"), ("calc", "xr-sheet"), ("slides", "xr-slide"), ("pdf", "xr-pdf")]
-tiles = {}
+SMALL = {"office": "tab-app", "writer": "tab-doc", "calc": "tab-sheet", "slides": "tab-slide", "pdf": "tab-pdf"}
+os.makedirs(os.path.join(OUT, "small"), exist_ok=True)
+tiles, plains = {}, {}
 for kit, name in SETS:
     named = on_grid(Image.open(os.path.join(KIT, kit + "-named-1024.png")))
     plain = on_grid(Image.open(os.path.join(KIT, kit + "-plain-1024.png")))
+    small = body(Image.open(os.path.join(KIT, kit + "-plain-1024.png")), 128)
+    small.save(os.path.join(OUT, "small", SMALL[kit] + ".png"), optimize=True)
+    if kit != "office":
+        b = io.BytesIO()
+        small.resize((64, 64), Image.LANCZOS).save(b, "WEBP", quality=90, method=6)
+        plains[kit] = "data:image/webp;base64," + base64.b64encode(b.getvalue()).decode()
     write_icns(os.path.join(OUT, name + ".icns"), named, plain)
     named.resize((512, 512), Image.LANCZOS).save(os.path.join(OUT, "preview", name + "-512.png"), optimize=True)
     plain.resize((64, 64), Image.LANCZOS).save(os.path.join(OUT, "preview", name + "-plain-64.png"), optimize=True)
@@ -109,6 +129,9 @@ s = open(home, encoding="utf-8").read()
 block = ("/*XR-KIND-START (scripts/make_icons.py)*/var KIND = {" +
          ",".join("%s:'%s'" % (k, v) for k, v in
                   (("word", tiles["writer"]), ("cell", tiles["calc"]), ("slide", tiles["slides"]), ("form", tiles["pdf"]))) +
+         "};\n  var KIND_PLAIN = {" +
+         ",".join("%s:'%s'" % (k, v) for k, v in
+                  (("word", plains["writer"]), ("cell", plains["calc"]), ("slide", plains["slides"]), ("form", plains["pdf"]))) +
          "};/*XR-KIND-END*/")
 s2, n = re.subn(r"/\*XR-KIND-START.*?/\*XR-KIND-END\*/", lambda m: block, s, flags=re.S)
 if n != 1:

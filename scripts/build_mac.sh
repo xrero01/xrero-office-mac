@@ -31,10 +31,10 @@ clang -arch "$ARCH" -mmacosx-version-min=11.0 -O2 -Wall -Werror -framework CoreF
   -o "$APP/Contents/MacOS/Xrero Office" "$ROOT/launcher/launcher.c"
 lipo -info "$APP/Contents/MacOS/Xrero Office" "$APP/Contents/MacOS/XreroOffice"
 
-echo "== [$ARCH] start-tab logo (replaces the ONLYOFFICE artwork the binary used to load)"
+echo "== [$ARCH] title-bar pictures: start-tab logo + document tab icons (replace the ONLYOFFICE artwork the binary used to load)"
 mkdir -p "$OUT/test/logo-$ARCH"
-swift "$ROOT/scripts/tab_logo.swift" "$APP" "$ROOT/assets/xrero-icon-1024.png" "$OUT/test/logo-$ARCH"
-ls -la "$APP/Contents/Resources/"xrero-tab*.tiff
+swift "$ROOT/scripts/tab_logo.swift" "$APP" "$ROOT/assets/icons/small" "$OUT/test/logo-$ARCH"
+ls -la "$APP/Contents/Resources/"xrero-tab*.tiff "$APP/Contents/Resources/"xrero_tab_*.tiff
 
 echo "== [$ARCH] converter JS engine"
 CONV="$APP/Contents/Resources/converter"

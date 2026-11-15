@@ -107,16 +107,18 @@ jobs:
           sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder || true
           # the largest window: the Dock hides itself on this CI Mac
           defaults write com.apple.dock autohide -bool true; killall Dock || true; sleep 4
+          # Retina window chrome when the display offers a 2x mode (otherwise the pictures use the 1x title bar)
+          swift mas/hidpi.swift 2>&1 | tee out/store/display.log || true
           rc=0
           # first run (fresh container), then the same Mac switched to Arabic in Settings (start page must follow)
           rm -rf ~/Library/Containers/com.xrero.office
           python3 mas/store_capture.py "/Applications/Xrero Office.app" audit en out/store test/inputs || rc=$?
           python3 mas/store_capture.py "/Applications/Xrero Office.app" switch ar out/store test/inputs || rc=$?
-          # the pictures: each language from a fresh container (no recent files)
+          # the pictures: each language from a fresh container (its Recent files = the four demo files store_capture opens)
           rm -rf ~/Library/Containers/com.xrero.office
           python3 mas/store_capture.py "/Applications/Xrero Office.app" shots en out/store mas/store_demo.docx || rc=$?
           rm -rf ~/Library/Containers/com.xrero.office
-          python3 mas/store_capture.py "/Applications/Xrero Office.app" shots ar out/store mas/store_demo.docx || rc=$?
+          python3 mas/store_capture.py "/Applications/Xrero Office.app" shots ar out/store mas/store_demo_ar.docx || rc=$?
           ls -la out/store
           exit $rc
 

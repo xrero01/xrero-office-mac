@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   mas:
-    runs-on: macos-14
+    runs-on: macos-15          # macos-14 runners are retired on GitHub ("not supported", 16 Nov 2026)
     timeout-minutes: 120
     env:
       V: "20.2"

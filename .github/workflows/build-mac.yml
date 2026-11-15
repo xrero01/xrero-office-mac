@@ -15,6 +15,10 @@ on:
       notary_wait:
         description: how long to wait for Apple notarization per file (pending builds are finished by finalize-mac.yml)
         default: "20m"
+      test_only:
+        description: "test + store pictures only: ad-hoc arm64, NO Developer ID signing / notarization / release, NO account on xrero.com; evidence = run artifact"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -49,6 +53,7 @@ jobs:
           mkdir payload && ditto -x -k xrero-payload.zip payload && ls payload payload/editors
 
       - name: Apple Developer ID + notarization (only when the secrets are set; otherwise an ad-hoc build)
+        if: ${{ !inputs.test_only }}
         env:
           P12: ${{ secrets.MAC_CERT_P12_B64 }}
           P12_PW: ${{ secrets.MAC_CERT_PASSWORD }}
@@ -61,7 +66,7 @@ jobs:
         run: bash scripts/build_mac.sh arm.dmg arm64 "$V" payload out
 
       - name: Build x86_64
-        if: ${{ inputs.intel }}
+        if: ${{ inputs.intel && !inputs.test_only }}
         run: bash scripts/build_mac.sh x64.dmg x86_64 "$V" payload out
 
       - name: Install arm64 from its DMG into /Applications (as a user does)
@@ -71,17 +76,59 @@ jobs:
         run: python3 scripts/test_converter.py "/Applications/Xrero Office.app" arm64 test out/test
 
       - name: Test arm64 - real app (first launch, start page, open, type EN/AR, bold, Cmd+S)
+        env:
+          XR_NO_SIGNUP: ${{ inputs.test_only && '1' || '' }}
         run: python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test
 
       - name: Test x86_64 under Rosetta - install from DMG, converter + real app
-        if: ${{ inputs.intel }}
+        if: ${{ inputs.intel && !inputs.test_only }}
         run: |
           bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-x86_64.dmg"
           python3 scripts/test_converter.py "/Applications/Xrero Office.app" x86_64 test out/test
           python3 scripts/ui_test.py "/Applications/Xrero Office.app" x86_64 test out/test
 
+      - name: Store pictures + first-run check - App Store variant (sandboxed test copy, ad hoc; xrero.com blocked)
+        if: ${{ inputs.test_only && !cancelled() }}
+        env:
+          TEAM_ID: "Y5U46S55X5"
+        run: |
+          set -o pipefail
+          osascript -e 'quit app "Xrero Office"' 2>/dev/null || true
+          mkdir -p out/store && rm -rf mas_out && mkdir -p mas_out
+          ditto "out/arm64/Xrero Office.app" "mas_out/Xrero Office.app"
+          { python3 mas/mas_patch.py "mas_out/Xrero Office.app" 999; bash mas/build_stub.sh "mas_out/Xrero Office.app" arm64; } > out/store/mas-variant.log 2>&1
+          sudo rm -rf "/Applications/Xrero Office.app"
+          sudo ditto "mas_out/Xrero Office.app" "/Applications/Xrero Office.app"
+          sudo chown -R "$(id -un)" "/Applications/Xrero Office.app"
+          sed "s/__TEAM__/$TEAM_ID/g" mas/test.entitlements > "$RUNNER_TEMP/test.entitlements"
+          bash mas/sign_mas.sh "/Applications/Xrero Office.app" - "$RUNNER_TEMP/test.entitlements" >> out/store/mas-variant.log 2>&1
+          # the pictures never talk to xrero.com (the locally stored signed-in state stays, as it does offline)
+          echo "127.0.0.1 xrero.com www.xrero.com" | sudo tee -a /etc/hosts
+          sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder || true
+          # the largest window: the Dock hides itself on this CI Mac
+          defaults write com.apple.dock autohide -bool true; killall Dock || true; sleep 4
+          rc=0
+          rm -rf ~/Library/Containers/com.xrero.office
+          python3 mas/store_capture.py "/Applications/Xrero Office.app" audit en out/store test/inputs || rc=$?
+          rm -rf ~/Library/Containers/com.xrero.office
+          python3 mas/store_capture.py "/Applications/Xrero Office.app" shots en out/store mas/store_demo.docx || rc=$?
+          python3 mas/store_capture.py "/Applications/Xrero Office.app" shots ar out/store mas/store_demo.docx || rc=$?
+          ls -la out/store
+          exit $rc
+
+      - name: Evidence + pictures (run artifact; test_only)
+        if: ${{ always() && inputs.test_only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-test-evidence-r${{ github.run_number }}
+          path: |
+            out/test
+            out/store
+            !out/test/fonts-*
+          retention-days: 30
+
       - name: Publish build + evidence (release)
-        if: ${{ always() }}
+        if: ${{ always() && !inputs.test_only }}
         run: |
           cd out
           rm -rf test/fonts-* || true

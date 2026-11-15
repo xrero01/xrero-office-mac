@@ -239,6 +239,28 @@ MAC_JS = r"""
     (document.head || document.documentElement).appendChild(s);
   }
   add(); document.addEventListener('DOMContentLoaded', add);
+  // ONLYOFFICE's first-run "New: Paste options / Multipage view / Chart tab ..." tips (TooltipManager, isNewFeature)
+  // announce the engine's release news on top of the user's document the first time each editor opens. Same as the
+  // iOS app (ios/web/xr-host.js noFeatureTips): their "already seen" keys - '<de|sse|pe|pdfe>-help-tip-*' and the
+  // 'help-tip-*' New-labels - read as seen. Only these announcement keys: the features themselves stay, and the real
+  // warnings (connection lost, read-only, licence ...) have no such key and still show.
+  (function noFeatureTips(){
+    var re = /(^|-)help-tip-/;
+    try {
+      var gi = Storage.prototype.getItem;
+      Storage.prototype.getItem = function (k) { return re.test(String(k)) ? '1' : gi.apply(this, arguments); };
+    } catch (e) {}
+    var n = 0, t = setInterval(function () {          // the editors' own store too (used when localStorage is off)
+      var ls = window.Common && Common.localStorage;
+      if (ls && ls.getItem && !ls.getItem.__xr) {
+        var g = ls.getItem;
+        ls.getItem = function (k) { return re.test(String(k)) ? '1' : g.apply(this, arguments); };
+        ls.getItem.__xr = true;
+      }
+      if (++n > 1200) clearInterval(t);
+    }, 25);
+    window.__xrNoFeatureTips = true;
+  })();
 })();
 /*XR-MAC-END*/
 """
@@ -249,7 +271,7 @@ for e in ("documenteditor", "spreadsheeteditor", "presentationeditor", "pdfedito
         s = re.sub(r"\n?/\*XR-MAC-START\*/.*?/\*XR-MAC-END\*/\n?", "", s, flags=re.S)
         s = re.sub(r"\n?/\*XR-ACCT-START\*/.*?/\*XR-ACCT-END\*/\n?", "", s, flags=re.S)
         open(f, "w", encoding="utf-8").write(s.rstrip() + "\n" + MAC_JS + ACCT_JS + "\n")
-log("mac header shim + Xrero account appended to app.js")
+log("mac header shim (+ no first-run feature tips) + Xrero account appended to app.js")
 
 # ---------------------------------------------------------------- start page
 login = os.path.join(RES, "login", "index.html")

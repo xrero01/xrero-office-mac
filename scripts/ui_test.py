@@ -74,6 +74,16 @@ class Page:
 
 test_pw = ""
 
+# visible ONLYOFFICE tip balloons (Common.UI.SynchronizeTip: the "New ..." feature tips and the like) and open dialogs
+# in an editor page + its editor frame; shim = the Mac web layer's noFeatureTips ran in the frame
+TIPS_JS = """(function(){var f=document.querySelector('iframe[name=frameEditor]');var docs=[document];
+  if(f&&f.contentDocument) docs.push(f.contentDocument);
+  function vis(e){var s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}
+  var tips=[],dlgs=[];docs.forEach(function(d){
+    [].slice.call(d.querySelectorAll('.synch-tip-root')).filter(vis).forEach(function(e){tips.push((e.innerText||'').replace(/\\s+/g,' ').trim().slice(0,90));});
+    [].slice.call(d.querySelectorAll('.asc-window')).filter(vis).forEach(function(e){var h=e.querySelector('.title');dlgs.push(((h||e).innerText||'').replace(/\\s+/g,' ').trim().slice(0,60));});});
+  return {shim:!!((f&&f.contentWindow)||window).__xrNoFeatureTips, tips:tips, dialogs:dlgs};})()"""
+
 async def main():
     global test_pw
     cmd = (["arch", "-x86_64"] if ARCH == "x86_64" else []) + [EXE, "--remote-debugging-port=%d" % PORT]
@@ -141,20 +151,31 @@ async def main():
                 if(s||++n>40){clearInterval(t);done(s);}},250);})""")
             ok("account_server_answer", ans and "Invalid email or password" in ans, repr(ans))
             screencap("01d-account-answer")
-            # create a real account in the app (a test account, deleted again at the end of this test)
-            test_mail = "mac-store-check-%d@xrero.com" % int(time.time())
-            test_pw = base64.urlsafe_b64encode(os.urandom(12)).decode()
-            res["test_account"] = test_mail
-            made = await pg.ev("""new Promise(function(done){try{
-              document.getElementById('xr-acct-tab-new').click();
-              document.getElementById('xr-acct-name').value='Mac Store Check';
-              document.getElementById('xr-acct-email').value=%s;
-              document.getElementById('xr-acct-password').value=%s;
-              document.getElementById('xr-acct-submit').click();}catch(e){done('error: '+e);return;}
-              var n=0,t=setInterval(function(){var o=document.getElementById('xr-acct-ov');var e=o&&o.querySelector('.err');
-                if(!o||(e&&e.textContent)||++n>60){clearInterval(t);done(o?('still: '+(e?e.textContent:'')):'open');}},250);})"""
-              % (json.dumps(test_mail), json.dumps(test_pw)))
-            ok("account_create_opens_app", made == "open", repr(made))
+            if os.environ.get("XR_NO_SIGNUP"):
+                # 16 Nov 2026: runs that must not create accounts on xrero.com (test-only builds, store pictures): the
+                # stored state of a signed-in user is written locally instead (what the card writes after a sign-in;
+                # the pages share it). The sign-up itself is NOT exercised here - listed under "skipped".
+                res.setdefault("skipped", []).append("account_create_opens_app (XR_NO_SIGNUP: no account made on xrero.com)")
+                made = await pg.ev("""new Promise(function(done){try{localStorage.setItem('xr-acct-token','local-ui-test');
+                  localStorage.setItem('xr-acct',JSON.stringify({locked:false,name:'Mac Store Check',email:'mac-check@example.invalid'}));
+                  var o=document.getElementById('xr-acct-ov'); if(o) o.parentNode.removeChild(o);}catch(e){done('error: '+e);return;}
+                  setTimeout(function(){done(document.getElementById('xr-acct-ov')?'card came back':'open');},2500);})""")
+                ok("account_local_session_opens_app", made == "open", repr(made))
+            else:
+                # create a real account in the app (a test account, deleted again at the end of this test)
+                test_mail = "mac-store-check-%d@xrero.com" % int(time.time())
+                test_pw = base64.urlsafe_b64encode(os.urandom(12)).decode()
+                res["test_account"] = test_mail
+                made = await pg.ev("""new Promise(function(done){try{
+                  document.getElementById('xr-acct-tab-new').click();
+                  document.getElementById('xr-acct-name').value='Mac Store Check';
+                  document.getElementById('xr-acct-email').value=%s;
+                  document.getElementById('xr-acct-password').value=%s;
+                  document.getElementById('xr-acct-submit').click();}catch(e){done('error: '+e);return;}
+                  var n=0,t=setInterval(function(){var o=document.getElementById('xr-acct-ov');var e=o&&o.querySelector('.err');
+                    if(!o||(e&&e.textContent)||++n>60){clearInterval(t);done(o?('still: '+(e?e.textContent:'')):'open');}},250);})"""
+                  % (json.dumps(test_mail), json.dumps(test_pw)))
+                ok("account_create_opens_app", made == "open", repr(made))
             await asyncio.sleep(1.5)
             pill = await pg.ev("(document.getElementById('xr-acct-start')||{}).textContent||''")
             ok("account_signed_in_pill", pill == "Mac Store Check", repr(pill))
@@ -215,6 +236,10 @@ async def main():
               return {wall: !!(d.getElementById('xr-acct-ov')||document.getElementById('xr-acct-ov')),
                 token: (function(){try{return !!w.localStorage.getItem('xr-acct-token');}catch(e){return 'err';}})()};})()""")
             ok("editor_open_when_signed_in", hb and hb.get("wall") is False and hb.get("token") is True, json.dumps(hb))
+            # 16 Nov 2026: no first-run "New: Paste options / Multipage view ..." tips over the document (patch_bundle.py
+            # MAC_JS noFeatureTips); any other visible tip balloon or open dialog is listed too
+            tips = await pg.ev(TIPS_JS)
+            ok("no_feature_tips", tips and tips.get("shim") and tips.get("tips") == [], json.dumps(tips, ensure_ascii=False))
             vw = await pg.ev("[innerWidth, innerHeight]") or [1200, 800]
             x, y = vw[0] * 0.5, vw[1] * 0.45
             await pg.click(x, y); await asyncio.sleep(0.6); await pg.click(x, y); await asyncio.sleep(0.6)
@@ -235,6 +260,8 @@ async def main():
             ok("typing_english", "Mac typing check 20.0.9 - English OK." in tail, "")
             ok("typing_arabic", "فحص الكتابة على ماك بالعربي يعمل" in tail, "")
             ok("typing_bold_text", "Bold عريض" in tail, repr(tail[-80:]))
+            tips = await pg.ev(TIPS_JS)
+            ok("no_feature_tips_after_typing", tips and tips.get("tips") == [], json.dumps(tips, ensure_ascii=False))
             await pg.shot("03-editor-typed")
             await pg.key(83, "KeyS", 4)               # Cmd+S
             await asyncio.sleep(6)

@@ -158,9 +158,11 @@ if nib_hits == 0:
 # accessibility dump of build-mac run 43772417382): the storyboard puts a download box (downloadBackgroundView: an image
 # view + a button, 32 points wide) at the trailing end of the title bar, past the right edge of the window - left to right
 # it is never on screen. Right to left the title bar is mirrored and the box lands inside the window at its left end:
-# a grey square with a light-blue bar in every Arabic window. The box is archived hidden (NSvFlags hidden bit), so it
-# is not drawn in either direction; the Mac app has no cloud downloads for it to show. A NIBArchive cannot change a
-# value's size in place (the flags grow from 2 to 4 bytes), so the storyboard file is written again from its parts.
+# a grey square with a light-blue bar in every Arabic window. Under it (run 43773855657) the cloud account button
+# (userProfileButton, a grey person) sits the same way. Both are archived hidden (NSvFlags hidden bit), so neither is
+# drawn in either direction - as left to right, where they never come on screen; the Mac app has no cloud account or
+# cloud downloads for them to show. A NIBArchive cannot change a value's size in place (the flags grow from 2 to 4
+# bytes), so the storyboard file is written again from its parts.
 def nib_read(b):
     """NIBArchive -> dict: header words, sections (objects/keys/values/classes) as lists, section order"""
     import struct
@@ -227,8 +229,8 @@ def nib_write(n):
     return b"NIBArchive" + struct.pack("<10I", *hdr) + body
 
 
-def nib_hide_outlet(b, outlet):
-    """the storyboard bytes with the view behind <outlet> archived hidden (None: no such outlet here)"""
+def nib_hide_outlets(b, outlets):
+    """the storyboard bytes with the views behind <outlets> archived hidden (None: none of them here)"""
     import struct
     n = nib_read(b)
     if not n or nib_write(n) != bytes(b):            # only a storyboard this code reads back byte for byte
@@ -253,7 +255,7 @@ def nib_hide_outlet(b, outlet):
         if cls[c] != "NSNibOutletConnector":
             continue
         f = {k: (t, d) for k, t, d, _ in fields(i)}
-        if f.get("NSLabel", (0,))[0] != 10 or string(ref(f["NSLabel"][1])) != outlet:
+        if f.get("NSLabel", (0,))[0] != 10 or string(ref(f["NSLabel"][1])) not in outlets:
             continue
         box = ref(f["NSDestination"][1])
         for k, t, d, at in fields(box):
@@ -262,7 +264,7 @@ def nib_hide_outlet(b, outlet):
                 n["values"][at][1] = 2
                 n["values"][at][2] = struct.pack("<I", (v & 0xffffffff) | 0x80000000)
                 hits += 1
-    return nib_write(n) if hits else None
+    return (nib_write(n), hits) if hits else None
 
 
 hide_hits = 0
@@ -270,13 +272,14 @@ for nib in nibs:
     b = open(nib, "rb").read()
     if b"downloadBackgroundView" not in b:
         continue
-    nb = nib_hide_outlet(b, "downloadBackgroundView")
-    if nb:
-        open(nib, "wb").write(nb)
-        hide_hits += 1
-        log("title bar download box archived hidden:", os.path.relpath(nib, RES), len(b), "->", len(nb), "bytes")
-if hide_hits == 0:
-    raise SystemExit("title bar download box (downloadBackgroundView) not found in the storyboard")
+    r = nib_hide_outlets(b, ("downloadBackgroundView", "userProfileButton"))
+    if r:
+        open(nib, "wb").write(r[0])
+        hide_hits += r[1]
+        log("title bar download box + account button archived hidden:", os.path.relpath(nib, RES), r[1], "views,",
+            len(b), "->", len(r[0]), "bytes")
+if hide_hits != 2:
+    raise SystemExit("title bar download box + account button: %d of 2 found in the storyboard" % hide_hits)
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)
 VALUE = re.compile(r'(=\s*")((?:[^"\\]|\\.)*)(")')

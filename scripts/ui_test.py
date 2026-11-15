@@ -163,11 +163,12 @@ async def main():
               var its=[].slice.call(document.querySelectorAll('#area-document-creation-grid .document-creation-item'));
               var gr=g?g.getBoundingClientRect():{right:0};
               return {n:its.length, labels:its.map(function(e){return (e.querySelector('.format-label')||{}).textContent.trim();}),
+                pics:its.every(function(e){return getComputedStyle(e,'::before').backgroundImage.indexOf('data:image/webp')>=0;}),
                 whole:its.every(function(e){var r=e.getBoundingClientRect();return r.width>100&&r.right<=gr.right+1;}),
                 rows:its.map(function(e){return Math.round(e.getBoundingClientRect().top);}).filter(function(v,i,a){return a.indexOf(v)===i;}).length,
                 scroll:g?g.scrollWidth>g.clientWidth+1:true};})()""")
             ok("four_app_cards", tiles and tiles.get("n") == 4 and tiles.get("whole") and not tiles.get("scroll")
-               and tiles.get("labels") == ["DOCX", "XLSX", "PPTX", "PDF"], json.dumps(tiles))
+               and tiles.get("labels") == ["DOCX", "XLSX", "PPTX", "PDF"] and tiles.get("pics"), json.dumps(tiles))
             await pg.shot("01e-start-four-apps")
             # About in the sidebar (as on Windows): opens the About window with the Mac app's version
             ab = await pg.ev("""new Promise(function(done){var a=document.querySelector('.tool-menu a[action="about"]');

@@ -130,6 +130,31 @@ START_JS = """(function(){var its=[].slice.call(document.querySelectorAll('#area
     wall:!!document.getElementById('xr-acct-ov')};})()"""
 
 
+def port_free():
+    import socket
+    with socket.socket() as so:
+        so.settimeout(1)
+        return so.connect_ex(("127.0.0.1", PORT)) != 0
+
+
+def ensure_quit():
+    """no instance of the app left from the previous pass (macOS would hand a document to it, and its DevTools port
+    would block the next launch's - run 17 lost the switch check and both editor pictures that way)"""
+    osa('tell application id "%s" to quit' % BID)
+    for _ in range(20):
+        if subprocess.run(["pgrep", "-x", "XreroOffice"], capture_output=True).returncode != 0 and port_free():
+            return
+        time.sleep(1)
+    subprocess.run(["pkill", "-9", "-x", "XreroOffice"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "editors_helper"], capture_output=True)
+    for _ in range(15):
+        if port_free():
+            break
+        time.sleep(1)
+    time.sleep(1)
+    log("ensure_quit: had to kill; port free:", port_free())
+
+
 def container_ready():
     return os.path.isdir(os.path.expanduser("~/Library/Containers/%s/Data/Library/Preferences" % BID))
 
@@ -147,14 +172,7 @@ def prime():
         except Exception:
             pass
     time.sleep(4)
-    osa('tell application id "%s" to quit' % BID)
-    for _ in range(30):
-        if p.poll() is not None:
-            break
-        time.sleep(1)
-    if p.poll() is None:
-        p.kill()
-    time.sleep(2)
+    ensure_quit()
     log("primed the container:", container_ready())
 
 
@@ -186,6 +204,7 @@ async def page_shot_2x(pg, name):
 
 
 async def main():
+    ensure_quit()
     if MODE in ("shots", "switch"):
         if not container_ready():
             prime()
@@ -209,6 +228,8 @@ async def main():
                 break
         if not start:
             log("no start page")
+            proc.kill()
+            ensure_quit()
             return proc
         log("start page after %.0fs: %s" % (time.time() - t0, start.get("url", "")[-120:]))
         if MODE == "audit":            # the first seconds as a user sees them (the window where macOS put it)
@@ -319,13 +340,7 @@ async def main():
                 else:
                     screen_shot(tag, place_window()[:4])
                     res["windows_" + tag] = osa(PROC + ' to get {name, subrole} of every window')
-    osa('tell application id "%s" to quit' % BID)
-    for _ in range(30):
-        if proc.poll() is not None:
-            break
-        await asyncio.sleep(1)
-    if proc.poll() is None:
-        proc.kill()
+    ensure_quit()
     return proc
 
 

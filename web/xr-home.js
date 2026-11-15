@@ -43,6 +43,8 @@
   // the item is shown here and opens the same About window with the Mac app's own version.
   var VERSION = '__XR_VERSION__';
   function isAr() {
+    // the page's ?lang= (the app's interface language) before the editors' last 'xr-lang' (see xr-account.js lang())
+    try { var l = (new URLSearchParams(location.search).get('lang') || '').toLowerCase(); if (l) return l.indexOf('ar') === 0; } catch (e) {}
     try { var v = localStorage.getItem('xr-lang'); if (v) return v === 'ar'; } catch (e) {}
     return document.documentElement.getAttribute('dir') === 'rtl' || /(^|\s)rtl(\s|$)/.test(document.body ? document.body.className : '');
   }

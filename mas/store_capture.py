@@ -13,6 +13,8 @@ shots: the app in the chosen interface language (the app's own setting, asc_user
          <lang>-<name>-page2x.png  the same page drawn by the app at Retina scale (DevTools, device scale 2)
 audit: first run in a fresh container: what a user sees in the first seconds and on the first open of each editor
        (Word, spreadsheet, presentation, PDF): tip balloons, dialogs, extra windows -> audit-*.png + capture-audit.json.
+switch: after audit, the same container relaunched in the other language (what a user does in Settings > Interface
+       language): the start page must follow it (direction, account pill on the far side, not over the sidebar).
 """
 import asyncio, base64, json, os, plistlib, shutil, subprocess, sys, time
 import aiohttp
@@ -118,11 +120,50 @@ SESSION_JS = """new Promise(function(done){try{
   setTimeout(function(){done(document.getElementById('xr-acct-ov')?'card came back':'open');},2500);})"""
 
 
+START_JS = """(function(){var its=[].slice.call(document.querySelectorAll('#area-document-creation-grid .document-creation-item'));
+  var p=document.getElementById('xr-acct-start'), pr=p?p.getBoundingClientRect():null, hit=[];
+  [].slice.call(document.querySelectorAll('.tool-menu li, .tool-menu a')).forEach(function(e){var r=e.getBoundingClientRect();
+    if(pr&&r.width&&r.height&&getComputedStyle(e).display!=='none'&&r.left<pr.right&&r.right>pr.left&&r.top<pr.bottom&&r.bottom>pr.top)
+      hit.push((e.innerText||'').trim().slice(0,30));});
+  return {dir:getComputedStyle(document.body).direction, lang:location.search, cards:its.map(function(e){return (e.innerText||'').trim();}),
+    pill:p?p.textContent:'', pill_side:pr?(pr.left+pr.width/2<innerWidth/2?'left':'right'):'', pill_over_sidebar:hit,
+    wall:!!document.getElementById('xr-acct-ov')};})()"""
+
+
+def container_ready():
+    return os.path.isdir(os.path.expanduser("~/Library/Containers/%s/Data/Library/Preferences" % BID))
+
+
+def prime():
+    """a fresh container has no preferences yet: one plain launch makes it, so the language can be set before the
+    launch that is photographed"""
+    import urllib.request
+    p = subprocess.Popen([EXE, "--remote-debugging-port=%d" % PORT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(60):
+        time.sleep(1)
+        try:
+            if "/login/" in urllib.request.urlopen("http://127.0.0.1:%d/json" % PORT, timeout=3).read().decode():
+                break
+        except Exception:
+            pass
+    time.sleep(4)
+    osa('tell application id "%s" to quit' % BID)
+    for _ in range(30):
+        if p.poll() is not None:
+            break
+        time.sleep(1)
+    if p.poll() is None:
+        p.kill()
+    time.sleep(2)
+    log("primed the container:", container_ready())
+
+
 def screen_shot(name, box):
     x, y, w, h = box
-    p = os.path.join(OUT, "%s-%s-window.png" % (LANG if MODE == "shots" else "audit", name))
+    pre = {"shots": LANG, "switch": "switch-" + LANG}.get(MODE, "audit")
+    p = os.path.join(OUT, "%s-%s-window.png" % (pre, name))
     subprocess.run(["screencapture", "-x", "-o", "-R", "%d,%d,%d,%d" % (x, y, w, h), p], capture_output=True)
-    full = os.path.join(OUT, "%s-%s-screen.png" % (LANG if MODE == "shots" else "audit", name))
+    full = os.path.join(OUT, "%s-%s-screen.png" % (pre, name))
     subprocess.run(["screencapture", "-x", full], capture_output=True)
     res["shots"].append({"name": name, "window": os.path.basename(p), "screen": os.path.basename(full), "box": box})
     log("shot", name, box)
@@ -145,7 +186,9 @@ async def page_shot_2x(pg, name):
 
 
 async def main():
-    if MODE == "shots":
+    if MODE in ("shots", "switch"):
+        if not container_ready():
+            prime()
         set_language()
     proc = subprocess.Popen([EXE, "--remote-debugging-port=%d" % PORT],
                             stdout=open(os.path.join(OUT, "app-%s-%s.log" % (MODE, LANG)), "w"), stderr=subprocess.STDOUT)
@@ -178,7 +221,7 @@ async def main():
         async with s.ws_connect(start["webSocketDebuggerUrl"], max_msg_size=0) as ws:
             pg = Page(ws)
             res["start_lang_query"] = await pg.ev("location.search")
-            if MODE == "shots" and ("lang=" + CODE) not in (res["start_lang_query"] or "") and not res.get("relaunched_for_language"):
+            if MODE in ("shots", "switch") and ("lang=" + CODE) not in (res["start_lang_query"] or "") and not res.get("relaunched_for_language"):
                 log("interface language is not", CODE, "->", res["start_lang_query"], "- the app's Settings path (settings:apply)")
                 await pg.ev("window.AscDesktopEditor.execCommand('settings:apply', JSON.stringify({langid:%s}))" % json.dumps(CODE))
                 await asyncio.sleep(2)
@@ -202,22 +245,23 @@ async def main():
         log("window", box)
         res["window"] = box
         await asyncio.sleep(3)
-        if MODE == "shots":
+        if MODE in ("shots", "switch"):
             async with s.ws_connect(start["webSocketDebuggerUrl"], max_msg_size=0) as ws:
                 pg = Page(ws)
                 vw = await pg.ev("[innerWidth, innerHeight]") or [1000, 700]
                 # no hover highlight on a card: the page's pointer rests on an empty spot at the bottom
                 await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": vw[0] * 0.55, "y": vw[1] - 6})
-                await asyncio.sleep(1)
-                res["start_page"] = await pg.ev("""(function(){var its=[].slice.call(document.querySelectorAll('#area-document-creation-grid .document-creation-item'));
-                  return {dir:getComputedStyle(document.body).direction, cards:its.map(function(e){return (e.innerText||'').trim();}),
-                    pill:(document.getElementById('xr-acct-start')||{}).textContent||'', wall:!!document.getElementById('xr-acct-ov')};})()""")
+                await asyncio.sleep(1.5)
+                res["start_page"] = await pg.ev(START_JS)
                 log("start page:", json.dumps(res["start_page"], ensure_ascii=False))
                 screen_shot("start", box[:4])
-                await page_shot_2x(pg, "start")
+                if MODE == "shots":
+                    await page_shot_2x(pg, "start")
 
         # documents, opened the way Finder does
-        if MODE == "shots":
+        if MODE == "switch":
+            docs = []
+        elif MODE == "shots":
             docs = [(DOC_NAME, SRC, "editor")]
         else:
             docs = [("Quarterly report.docx", os.path.join(os.path.dirname(os.path.abspath(__file__)), "store_demo.docx"), "word"),
@@ -266,9 +310,9 @@ async def main():
                         tabs:[].slice.call(w.document.querySelectorAll('#toolbar .ribtab a')).map(function(a){return a.innerText.trim();}).filter(String).slice(0,12)};})()""")
                     res["editor_info"] = info
                     log("editor:", json.dumps(info, ensure_ascii=False))
-                    # the page's pointer rests on the empty page area under the text (no button hover / tooltip)
+                    # the page's pointer rests on an empty stretch of the status bar (no table handle, no tooltip)
                     vw = await pg.ev("[innerWidth, innerHeight]") or [1000, 700]
-                    await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": vw[0] * 0.5, "y": vw[1] - 70})
+                    await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": vw[0] * (0.36 if LANG == "en" else 0.64), "y": vw[1] - 11})
                     await asyncio.sleep(2)
                     screen_shot(tag, place_window()[:4])
                     await page_shot_2x(pg, tag)
@@ -291,7 +335,14 @@ if r == "again":                 # the language was switched through the app's S
     r = asyncio.run(main())
 json.dump(res, open(os.path.join(OUT, "capture-%s-%s.json" % (MODE, LANG)), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print(json.dumps({k: v for k, v in res.items() if k != "log"}, ensure_ascii=False, indent=1)[:4000])
-bad = [t for t, v in res.get("editors", {}).items() if v and v.get("tips")]
+bad = ["tips in " + t for t, v in res.get("editors", {}).items() if v and v.get("tips")]
+sp = res.get("start_page") or {}
+if MODE in ("shots", "switch"):
+    want = "rtl" if LANG == "ar" else "ltr"
+    if sp.get("dir") != want or ("lang=" + CODE) not in (sp.get("lang") or ""):
+        bad.append("start page not in %s: %s %s" % (CODE, sp.get("dir"), sp.get("lang")))
+    if sp.get("pill_over_sidebar") or sp.get("pill_side") != ("left" if LANG == "ar" else "right"):
+        bad.append("account pill %s over %s" % (sp.get("pill_side"), sp.get("pill_over_sidebar")))
 if bad:
-    print("feature tips still visible in:", bad)
+    print("FAIL:", bad)
 sys.exit(3 if bad else 0)

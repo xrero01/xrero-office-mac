@@ -108,10 +108,14 @@ jobs:
           # the largest window: the Dock hides itself on this CI Mac
           defaults write com.apple.dock autohide -bool true; killall Dock || true; sleep 4
           rc=0
+          # first run (fresh container), then the same Mac switched to Arabic in Settings (start page must follow)
           rm -rf ~/Library/Containers/com.xrero.office
           python3 mas/store_capture.py "/Applications/Xrero Office.app" audit en out/store test/inputs || rc=$?
+          python3 mas/store_capture.py "/Applications/Xrero Office.app" switch ar out/store test/inputs || rc=$?
+          # the pictures: each language from a fresh container (no recent files)
           rm -rf ~/Library/Containers/com.xrero.office
           python3 mas/store_capture.py "/Applications/Xrero Office.app" shots en out/store mas/store_demo.docx || rc=$?
+          rm -rf ~/Library/Containers/com.xrero.office
           python3 mas/store_capture.py "/Applications/Xrero Office.app" shots ar out/store mas/store_demo.docx || rc=$?
           ls -la out/store
           exit $rc

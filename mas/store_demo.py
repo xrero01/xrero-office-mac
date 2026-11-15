@@ -88,37 +88,39 @@ d = Document()
 for s in d.sections:                       # A4
     s.page_width, s.page_height = Cm(21.0), Cm(29.7)
     s.left_margin = s.right_margin = Cm(2.3)
-    s.top_margin, s.bottom_margin = Cm(2.0), Cm(2.0)
+    s.top_margin, s.bottom_margin = Cm(1.3), Cm(2.0)   # the whole table fits the editor window of the pictures
 normal = d.styles["Normal"]
 normal.font.size = Pt(11)
 fonts(normal.element.get_or_add_rPr())
 
 # English title + the line under it
 p = para(d, after=2)
-run(p, "Quarterly Report", 26, True, INK)
-p = para(d, after=14)
-run(p, "Q3 2026  ·  Dubai, Abu Dhabi and Sharjah", 12, False, GREY)
+run(p, "Quarterly Report", 24, True, INK)
+p = para(d, after=10)
+# (English words only from the spelling dictionary: the editor underlines Latin-script city names it does not know,
+# and it does not read w:noProof - the cities are named in the Arabic text and table)
+run(p, "Q3 2026  ·  United Arab Emirates", 12, False, GREY)
 
 # Arabic heading + paragraph (right to left)
 p = para(d, rtl=True, after=4)
-run(p, "ملخص الربع الثالث", 15, True, TEAL, rtl=True)
-p = para(d, rtl=True, after=12)
-p.paragraph_format.line_spacing = 1.25
+run(p, "ملخص الربع الثالث", 14, True, TEAL, rtl=True)
+p = para(d, rtl=True, after=9)
+p.paragraph_format.line_spacing = 1.15
 run(p, "يستعرض هذا التقرير أبرز ما أنجزته فرق العمل في دبي وأبوظبي والشارقة خلال الربع الثالث، "
        "ويحدد أولويات العمل للربع القادم. أُعدّ التقرير باللغتين العربية والإنجليزية في مستند واحد.", 12, rtl=True)
 
 # English bullet list
 p = para(d, after=4)
-run(p, "Highlights", 15, True, TEAL)
-for t in ("New office opened in Sharjah",
+run(p, "Highlights", 14, True, TEAL)
+for t in ("A new office opened this quarter",
           "29 projects delivered across three emirates",
           "One bilingual template for Arabic and English documents"):
-    p = para(d, after=3, style="List Bullet")
+    p = para(d, after=2, style="List Bullet")
     run(p, t, 11.5)
 
 # Arabic table (right to left)
-p = para(d, rtl=True, before=10, after=6)
-run(p, "المشاريع حسب المكتب", 15, True, TEAL, rtl=True)
+p = para(d, rtl=True, before=6, after=4)
+run(p, "المشاريع حسب المكتب", 14, True, TEAL, rtl=True)
 # The editor engine draws every table left to right (it has no w:bidiVisual), so the columns are stored in visual
 # order: the first column (المكتب) is the right-most one, as an Arabic reader expects - in any word processor.
 rows = [tuple(reversed(r)) for r in (("المكتب", "المشاريع المنجزة", "الحالة"),
@@ -136,7 +138,7 @@ for i, row in enumerate(rows):
         c = t.cell(i, j)
         c.width = Cm(5.46)
         c._tc.remove(c.paragraphs[0]._p)
-        cp = para(c, rtl=True, before=3, after=3, align=WD_ALIGN_PARAGRAPH.CENTER if j == 1 else None)
+        cp = para(c, rtl=True, before=2, after=2, align=WD_ALIGN_PARAGRAPH.CENTER if j == 1 else None)
         run(cp, text, 11.5, bold=(i == 0), color=WHITE if i == 0 else INK, rtl=True)
         if i == 0:
             shade(c, "0585A1")

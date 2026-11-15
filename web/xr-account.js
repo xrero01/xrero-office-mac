@@ -29,12 +29,16 @@
     return null;
   }
   function lang() {
-    var v = ls('xr-lang');
-    if (v === 'ar' || v === 'en') return v;
+    // 16 Nov 2026: the page's own ?lang= first - on Mac the app passes its interface language (Settings > Interface
+    // language) to the start page and every editor. 'xr-lang' is what the editors last wrote (the Windows EN/AR switch,
+    // hidden on Mac): read first, it kept the old language after a switch - English card + the sign-in pill over the
+    // Arabic sidebar's Home item.
     try {
       var l = (new URLSearchParams(location.search).get('lang') || '').toLowerCase();
       if (l) return l.indexOf('ar') === 0 ? 'ar' : 'en';
     } catch (e) {}
+    var v = ls('xr-lang');
+    if (v === 'ar' || v === 'en') return v;
     return (navigator.language || '').toLowerCase().indexOf('ar') === 0 ? 'ar' : 'en';
   }
   var S = {

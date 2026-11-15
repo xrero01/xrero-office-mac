@@ -154,18 +154,20 @@ if nib_hits == 0:
     raise SystemExit("storyboard tab logo reference not found")
 
 
-# The title bar's download indicator (16 Nov 2026, found in the Arabic store pictures): its box is 0 points wide while
-# nothing downloads, but the 30-point image view inside it is drawn anyway - views no longer clip to their bounds by
-# default on macOS 14+. Left to right the box sits at the window's right edge and the image falls outside the window;
-# right to left the box moves to the left edge and the image (a grey square with a blue bar) shows in the title bar.
-# Fix: the box clips to its bounds (the storyboard's own IBNSClipsToBounds flag, 0 -> 1, same length). While a download
-# runs the box is 30 points wide and the indicator shows as before.
-def nib_values(b):
-    """NIBArchive: [(object class, [(key, type, value, value offset)])]"""
+# The title bar's download indicator (16 Nov 2026, found in the Arabic store pictures, located by the title bar's
+# accessibility dump of build-mac run 43772417382): the storyboard puts a download box (downloadBackgroundView: an image
+# view + a button, 32 points wide) at the trailing end of the title bar, past the right edge of the window - left to right
+# it is never on screen. Right to left the title bar is mirrored and the box lands inside the window at its left end:
+# a grey square with a light-blue bar in every Arabic window. The box is archived hidden (NSvFlags hidden bit), so it
+# is not drawn in either direction; the Mac app has no cloud downloads for it to show. A NIBArchive cannot change a
+# value's size in place (the flags grow from 2 to 4 bytes), so the storyboard file is written again from its parts.
+def nib_read(b):
+    """NIBArchive -> dict: header words, sections (objects/keys/values/classes) as lists, section order"""
     import struct
     if b[:10] != b"NIBArchive":
         return None
-    _, _, oc, oo, kc, ko, vc, vo, cc, co = struct.unpack("<10I", b[10:50])
+    hdr = list(struct.unpack("<10I", b[10:50]))
+    _, _, oc, oo, kc, ko, vc, vo, cc, co = hdr
 
     def varint(p):
         v = s = 0
@@ -174,61 +176,106 @@ def nib_values(b):
             v |= (x & 0x7f) << s; s += 7
             if x & 0x80:
                 return v, p
+    size = {0: 1, 1: 2, 2: 4, 3: 8, 4: 0, 5: 0, 6: 4, 7: 8, 9: 0, 10: 4}
+    objs, p = [], oo
+    for _ in range(oc):
+        c, p = varint(p); vi, p = varint(p); n, p = varint(p)
+        objs.append([c, vi, n])
     keys, p = [], ko
     for _ in range(kc):
-        n, p = varint(p); keys.append(b[p:p + n].decode("latin1")); p += n
-    classes, p = [], co
-    for _ in range(cc):
-        n, p = varint(p); ex, p = varint(p); p += 4 * ex
-        classes.append(b[p:p + n].rstrip(b"\0").decode("latin1")); p += n
-    size = {0: 1, 1: 2, 2: 4, 3: 8, 4: 0, 5: 0, 6: 4, 7: 8, 9: 0, 10: 4}
+        n, p = varint(p); keys.append(bytes(b[p:p + n])); p += n
     vals, p = [], vo
     for _ in range(vc):
         k, p = varint(p); t = b[p]; p += 1
         if t == 8:
-            n, p = varint(p); v = b[p:p + n]; at = p; p += n
+            n, p = varint(p); data = bytes(b[p:p + n]); p += n
         else:
-            at = p; v = b[p:p + size[t]]; p += size[t]
-            if t == 10:
-                v = struct.unpack("<I", v)[0]
-        vals.append((keys[k], t, v, at))
-    objs, p = [], oo
-    for _ in range(oc):
-        c, p = varint(p); vi, p = varint(p); n, p = varint(p)
-        objs.append((classes[c], vals[vi:vi + n]))
-    return objs
+            data = bytes(b[p:p + size[t]]); p += size[t]
+        vals.append([k, t, data])
+    classes, p = [], co
+    for _ in range(cc):
+        n, p = varint(p); ex, p = varint(p)
+        extras = bytes(b[p:p + 4 * ex]); p += 4 * ex
+        classes.append([ex, extras, bytes(b[p:p + n])]); p += n
+    order = [name for _, name in sorted([(oo, "objects"), (ko, "keys"), (vo, "values"), (co, "classes")])]
+    return {"hdr": hdr, "objects": objs, "keys": keys, "values": vals, "classes": classes, "order": order}
 
 
-clip_hits = 0
-for nib in nibs:
-    b = bytearray(open(nib, "rb").read())
-    if b"downloadBackgroundView" not in b:
-        continue
-    objs = nib_values(bytes(b))
-    if not objs:
-        continue
+def nib_write(n):
+    import struct
 
-    def field(i, key):
-        return next((v for k, t, v, at in objs[i][1] if k == key), None)
+    def varint(v):
+        out = bytearray()
+        while True:
+            x = v & 0x7f; v >>= 7
+            if v == 0:
+                out.append(x | 0x80)
+                return bytes(out)
+            out.append(x)
+    sec = {
+        "objects": b"".join(varint(c) + varint(vi) + varint(k) for c, vi, k in n["objects"]),
+        "keys": b"".join(varint(len(k)) + k for k in n["keys"]),
+        "values": b"".join(varint(k) + bytes([t]) + ((varint(len(d)) + d) if t == 8 else d) for k, t, d in n["values"]),
+        "classes": b"".join(varint(len(name)) + varint(ex) + extras + name for ex, extras, name in n["classes"]),
+    }
+    off, body, at = {}, b"", 50
+    for name in n["order"]:
+        off[name] = at; body += sec[name]; at += len(sec[name])
+    h = n["hdr"]
+    hdr = [h[0], h[1], len(n["objects"]), off["objects"], len(n["keys"]), off["keys"],
+           len(n["values"]), off["values"], len(n["classes"]), off["classes"]]
+    return b"NIBArchive" + struct.pack("<10I", *hdr) + body
+
+
+def nib_hide_outlet(b, outlet):
+    """the storyboard bytes with the view behind <outlet> archived hidden (None: no such outlet here)"""
+    import struct
+    n = nib_read(b)
+    if not n or nib_write(n) != bytes(b):            # only a storyboard this code reads back byte for byte
+        return None
+    keys = [k.decode("latin1") for k in n["keys"]]
+    cls = [name.rstrip(b"\0").decode("latin1") for _, _, name in n["classes"]]
+
+    def fields(i):
+        c, vi, cnt = n["objects"][i]
+        return [(keys[k], t, d, vi + j) for j, (k, t, d) in enumerate(n["values"][vi:vi + cnt])]
+
+    def ref(d):
+        return struct.unpack("<I", d)[0]
 
     def string(i):
-        v = field(i, "NS.bytes")
-        return v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else None
-    for c, vs in objs:
-        if c != "NSNibOutletConnector":
+        for k, t, d, _ in fields(i):
+            if k == "NS.bytes" and t == 8:
+                return d.decode("utf-8", "replace")
+        return None
+    hits = 0
+    for i, (c, _, _) in enumerate(n["objects"]):
+        if cls[c] != "NSNibOutletConnector":
             continue
-        d = dict((k, v) for k, t, v, at in vs)
-        if not isinstance(d.get("NSLabel"), int) or string(d["NSLabel"]) != "downloadBackgroundView":
+        f = {k: (t, d) for k, t, d, _ in fields(i)}
+        if f.get("NSLabel", (0,))[0] != 10 or string(ref(f["NSLabel"][1])) != outlet:
             continue
-        box = d["NSDestination"]
-        flag = [(t, at) for k, t, v, at in objs[box][1] if k == "IBNSClipsToBounds"]
-        if len(flag) != 1 or flag[0][0] != 0:
-            raise SystemExit("download box: no int8 IBNSClipsToBounds in " + nib)
-        b[flag[0][1]] = 1
-        clip_hits += 1
-    open(nib, "wb").write(bytes(b))
-log("title bar download box clips to its bounds:", clip_hits)
-if clip_hits == 0:
+        box = ref(f["NSDestination"][1])
+        for k, t, d, at in fields(box):
+            if k == "NSvFlags":
+                v = struct.unpack({0: "<b", 1: "<h", 2: "<i", 3: "<q"}[t], d)[0]
+                n["values"][at][1] = 2
+                n["values"][at][2] = struct.pack("<I", (v & 0xffffffff) | 0x80000000)
+                hits += 1
+    return nib_write(n) if hits else None
+
+
+hide_hits = 0
+for nib in nibs:
+    b = open(nib, "rb").read()
+    if b"downloadBackgroundView" not in b:
+        continue
+    nb = nib_hide_outlet(b, "downloadBackgroundView")
+    if nb:
+        open(nib, "wb").write(nb)
+        hide_hits += 1
+        log("title bar download box archived hidden:", os.path.relpath(nib, RES), len(b), "->", len(nb), "bytes")
+if hide_hits == 0:
     raise SystemExit("title bar download box (downloadBackgroundView) not found in the storyboard")
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)

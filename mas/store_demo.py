@@ -13,7 +13,6 @@ backwards. No customer names, no money amounts, no test strings. Fonts that ever
 Geeza Pro (Arabic - heavier than Arial's Arabic at these sizes)."""
 import os, sys
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
@@ -130,8 +129,7 @@ def make(path, second_line_ar):
     # English list (left to right): the same report in its second language
     p = para(d, before=8, after=4)
     run(p, "Highlights", 14, True, TEAL)
-    for t in ("A new office opened this quarter",
-              "29 projects delivered across three emirates",
+    for t in ("29 projects delivered across three emirates",          # (two: the list ends inside the picture)
               "One bilingual template for Arabic and English documents"):
         p = para(d, after=2, style="List Bullet")
         run(p, t, 11.5)

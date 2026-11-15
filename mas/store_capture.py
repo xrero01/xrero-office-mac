@@ -148,7 +148,7 @@ START_JS = """(function(){var its=[].slice.call(document.querySelectorAll('#area
   function vis(e){var s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}
   function latin(){var out=[],w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT),n;
     while((n=w.nextNode())){var t=n.nodeValue.replace(/\\s+/g,' ').trim(),e=n.parentElement;
-      if(!t||!/[A-Za-z]{2,}/.test(t)||!e||e.closest('script,style,svg')||!vis(e))continue;
+      if(!t||!/[A-Za-z]{2,}/.test(t)||!e||e.closest('script,style,svg,.file-list-body')||!vis(e))continue;   // (file names are the user's)
       if(/^(Xrero( Office)?|PDF|[A-Z]{1,2}|\\.[a-z0-9]{2,5})$/.test(t))continue;
       out.push(t.slice(0,50));}
     return out;}})()"""

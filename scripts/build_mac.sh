@@ -18,13 +18,10 @@ hdiutil detach "$MNT" >/dev/null
 xattr -cr "$APP"
 lipo -info "$APP/Contents/MacOS/ONLYOFFICE"
 
-echo "== [$ARCH] icon"
-ICONSET="$(mktemp -d)/AppIcon.iconset"; mkdir -p "$ICONSET"
-for s in 16 32 128 256 512; do
-  sips -z $s $s "$ROOT/assets/xrero-icon-1024.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  d=$((s * 2)); sips -z $d $d "$ROOT/assets/xrero-icon-1024.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+echo "== [$ARCH] icons (assets/icons, made by scripts/make_icons.py: Mac icon grid, plain artwork at 32 px and below)"
+cp "$ROOT/assets/icons/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+# per-kind document icons; patch_bundle.py points every document type at one of them
+for k in xr-doc xr-sheet xr-slide xr-pdf; do cp "$ROOT/assets/icons/$k.icns" "$APP/Contents/Resources/$k.icns"; done
 
 echo "== [$ARCH] rebrand + Xrero web layer"
 python3 "$ROOT/scripts/patch_bundle.py" "$APP" "$PAYLOAD" "$VERSION"

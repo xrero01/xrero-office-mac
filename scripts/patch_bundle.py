@@ -6,7 +6,8 @@ usage: patch_bundle.py <path/to/Xrero Office.app> <payload dir> <version>
 payload dir (from the Windows release payload, same 9.4.0 web build):
     editors/{sdkjs,web-apps,sdkjs-plugins,webext}   Xrero-branded web layer incl. the 20.0.9 Arabic PDF fix
     login/index.html                                 Xrero start page
-    assets/xrero-icon-1024.png                       (repo) app icon source - turned into AppIcon.icns by build_mac.sh
+    assets/icons/*.icns                              (repo) app + document icons, copied in by build_mac.sh
+    assets/xrero-icon-1024.png                       (repo) start-tab logo source (tab_logo.swift)
 """
 import glob, os, plistlib, re, shutil, sys
 
@@ -42,6 +43,34 @@ p["SUAutomaticallyUpdate"] = False
 # Icon: the compiled asset catalog (Assets.car) carries the ONLYOFFICE icon under CFBundleIconName -> use the .icns
 p.pop("CFBundleIconName", None)
 p["CFBundleIconFile"] = "AppIcon"
+# Document icons (15 Nov 2026, the new Xrero kit): each document type -> one of the four kind icons that build_mac.sh
+# copied into Resources (xr-doc / xr-sheet / xr-slide / xr-pdf .icns). The official names (file-docx ...) live in the
+# asset catalog; new names that are not in it make macOS load our loose .icns, the same way as CFBundleIconFile above.
+KIND_OF = {}
+for k, exts in (("xr-doc", "docx doc odt rtf txt htm html dotx ott fodt xml epub mht fb2 pages hwpx hwp hml docxf"),
+                ("xr-sheet", "xlsx xls ods ots fods csv xlsm xlsb numbers xltx"),
+                ("xr-slide", "pptx ppt odp ppsx pps potx otp key odg vsdx vstx"),
+                ("xr-pdf", "pdf djvu xps oform")):
+    for e in exts.split():
+        KIND_OF[e] = k
+n_icons = 0
+for dt in p.get("CFBundleDocumentTypes", []):
+    exts = [e.lower() for e in dt.get("CFBundleTypeExtensions", [])]
+    kind = next((KIND_OF[e] for e in exts if e in KIND_OF), "xr-doc")
+    dt["CFBundleTypeIconFile"] = kind
+    dt.pop("CFBundleTypeIconFiles", None)
+    dt.pop("CFBundleTypeIconSystemGenerated", None)
+    n_icons += 1
+for key in ("UTExportedTypeDeclarations", "UTImportedTypeDeclarations"):
+    for ut in p.get(key, []):
+        tags = ut.get("UTTypeTagSpecification", {}).get("public.filename-extension", [])
+        tags = [tags] if isinstance(tags, str) else tags
+        hit = next((KIND_OF[e.lower()] for e in tags if e.lower() in KIND_OF), None)
+        if hit and ("UTTypeIconFile" in ut or "UTTypeIconFiles" in ut or "UTTypeIconName" in ut):
+            ut["UTTypeIconFile"] = hit
+            ut.pop("UTTypeIconFiles", None); ut.pop("UTTypeIconName", None)
+            n_icons += 1
+log("document icons -> xr-doc/xr-sheet/xr-slide/xr-pdf:", n_icons)
 # CFBundleExecutable "Xrero Office" = launcher/launcher.c (built by build_mac.sh): seeds the first-run
 # preferences, then execs the real binary, renamed to XreroOffice (the process name in ps / crash reports).
 p["CFBundleExecutable"] = NAME
@@ -172,6 +201,19 @@ for sub in ("sdkjs", "web-apps", "sdkjs-plugins", "webext"):
 for b in glob.glob(os.path.join(E, "sdkjs", "*", "sdk-all.bin")) + glob.glob(os.path.join(E, "sdkjs", "*", "sdk-all.cache")):
     os.remove(b)
 log("editors replaced; snapshots removed")
+# Editor header colour: the payload's XR-HEADER block (from the Windows release) paints the top bar of each editor in
+# its own colour (#2B579A blue for documents ...). The Mac app uses the one Xrero teal for all of them (15 Nov 2026).
+TEAL = "#0585A1"
+n_hdr = 0
+for css in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "resources", "css", "app.css")):
+    t = open(css, encoding="utf-8", errors="surrogateescape").read()
+    def teal(m):
+        return re.sub(r"(--toolbar-header-(?:document|spreadsheet|presentation|pdf|visio):)\s*#[0-9A-Fa-f]{3,8}", r"\g<1>" + TEAL, m.group(0))
+    t2 = re.sub(r"/\*XR-HEADER\*/.*?/\*XR-HEADER-END\*/", teal, t, flags=re.S)
+    if t2 != t:
+        open(css, "w", encoding="utf-8", errors="surrogateescape").write(t2)
+        n_hdr += 1
+log("editor header colour -> Xrero teal in", n_hdr, "stylesheets")
 
 # Hide the Xrero header controls that call Windows-only native commands (PDF->Word converter, Designs dialog,
 # EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share) - on Mac they would be dead buttons.

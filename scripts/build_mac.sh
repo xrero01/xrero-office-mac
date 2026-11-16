@@ -18,13 +18,10 @@ hdiutil detach "$MNT" >/dev/null
 xattr -cr "$APP"
 lipo -info "$APP/Contents/MacOS/ONLYOFFICE"
 
-echo "== [$ARCH] icon"
-ICONSET="$(mktemp -d)/AppIcon.iconset"; mkdir -p "$ICONSET"
-for s in 16 32 128 256 512; do
-  sips -z $s $s "$ROOT/assets/xrero-icon-1024.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  d=$((s * 2)); sips -z $d $d "$ROOT/assets/xrero-icon-1024.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+echo "== [$ARCH] icons (assets/icons, made by scripts/make_icons.py: Mac icon grid, plain artwork at 32 px and below)"
+cp "$ROOT/assets/icons/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+# per-kind document icons; patch_bundle.py points every document type at one of them
+for k in xr-doc xr-sheet xr-slide xr-pdf; do cp "$ROOT/assets/icons/$k.icns" "$APP/Contents/Resources/$k.icns"; done
 
 echo "== [$ARCH] rebrand + Xrero web layer"
 python3 "$ROOT/scripts/patch_bundle.py" "$APP" "$PAYLOAD" "$VERSION"
@@ -34,10 +31,10 @@ clang -arch "$ARCH" -mmacosx-version-min=11.0 -O2 -Wall -Werror -framework CoreF
   -o "$APP/Contents/MacOS/Xrero Office" "$ROOT/launcher/launcher.c"
 lipo -info "$APP/Contents/MacOS/Xrero Office" "$APP/Contents/MacOS/XreroOffice"
 
-echo "== [$ARCH] start-tab logo (replaces the ONLYOFFICE artwork the binary used to load)"
+echo "== [$ARCH] title-bar pictures: start-tab logo + document tab icons (replace the ONLYOFFICE artwork the binary used to load)"
 mkdir -p "$OUT/test/logo-$ARCH"
-swift "$ROOT/scripts/tab_logo.swift" "$APP" "$ROOT/assets/xrero-icon-1024.png" "$OUT/test/logo-$ARCH"
-ls -la "$APP/Contents/Resources/"xrero-tab*.tiff
+swift "$ROOT/scripts/tab_logo.swift" "$APP" "$ROOT/assets/icons/small" "$OUT/test/logo-$ARCH"
+ls -la "$APP/Contents/Resources/"xrero-tab*.tiff "$APP/Contents/Resources/"xrero_tab_*.tiff
 
 echo "== [$ARCH] converter JS engine"
 CONV="$APP/Contents/Resources/converter"

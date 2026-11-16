@@ -6,7 +6,9 @@ usage: patch_bundle.py <path/to/Xrero Office.app> <payload dir> <version>
 payload dir (from the Windows release payload, same 9.4.0 web build):
     editors/{sdkjs,web-apps,sdkjs-plugins,webext}   Xrero-branded web layer incl. the 20.0.9 Arabic PDF fix
     login/index.html                                 Xrero start page
-    assets/xrero-icon-1024.png                       (repo) app icon source - turned into AppIcon.icns by build_mac.sh
+    assets/icons/*.icns                              (repo) app + document icons, copied in by build_mac.sh
+    assets/icons/small/*.png                         (repo) title-bar pictures: start-tab logo + document tab icons
+                                                     (scripts/make_icons.py -> tab_logo.swift)
 """
 import glob, os, plistlib, re, shutil, sys
 
@@ -42,6 +44,34 @@ p["SUAutomaticallyUpdate"] = False
 # Icon: the compiled asset catalog (Assets.car) carries the ONLYOFFICE icon under CFBundleIconName -> use the .icns
 p.pop("CFBundleIconName", None)
 p["CFBundleIconFile"] = "AppIcon"
+# Document icons (15 Nov 2026, the new Xrero kit): each document type -> one of the four kind icons that build_mac.sh
+# copied into Resources (xr-doc / xr-sheet / xr-slide / xr-pdf .icns). The official names (file-docx ...) live in the
+# asset catalog; new names that are not in it make macOS load our loose .icns, the same way as CFBundleIconFile above.
+KIND_OF = {}
+for k, exts in (("xr-doc", "docx doc odt rtf txt htm html dotx ott fodt xml epub mht fb2 pages hwpx hwp hml docxf"),
+                ("xr-sheet", "xlsx xls ods ots fods csv xlsm xlsb numbers xltx"),
+                ("xr-slide", "pptx ppt odp ppsx pps potx otp key odg vsdx vstx"),
+                ("xr-pdf", "pdf djvu xps oform")):
+    for e in exts.split():
+        KIND_OF[e] = k
+n_icons = 0
+for dt in p.get("CFBundleDocumentTypes", []):
+    exts = [e.lower() for e in dt.get("CFBundleTypeExtensions", [])]
+    kind = next((KIND_OF[e] for e in exts if e in KIND_OF), "xr-doc")
+    dt["CFBundleTypeIconFile"] = kind
+    dt.pop("CFBundleTypeIconFiles", None)
+    dt.pop("CFBundleTypeIconSystemGenerated", None)
+    n_icons += 1
+for key in ("UTExportedTypeDeclarations", "UTImportedTypeDeclarations"):
+    for ut in p.get(key, []):
+        tags = ut.get("UTTypeTagSpecification", {}).get("public.filename-extension", [])
+        tags = [tags] if isinstance(tags, str) else tags
+        hit = next((KIND_OF[e.lower()] for e in tags if e.lower() in KIND_OF), None)
+        if hit and ("UTTypeIconFile" in ut or "UTTypeIconFiles" in ut or "UTTypeIconName" in ut):
+            ut["UTTypeIconFile"] = hit
+            ut.pop("UTTypeIconFiles", None); ut.pop("UTTypeIconName", None)
+            n_icons += 1
+log("document icons -> xr-doc/xr-sheet/xr-slide/xr-pdf:", n_icons)
 # CFBundleExecutable "Xrero Office" = launcher/launcher.c (built by build_mac.sh): seeds the first-run
 # preferences, then execs the real binary, renamed to XreroOffice (the process name in ps / crash reports).
 p["CFBundleExecutable"] = NAME
@@ -72,6 +102,16 @@ BIN_SWAPS = [
     # start-tab logo: the asset catalog's ONLYOFFICE artwork -> Xrero files in Resources (made by tab_logo.swift)
     (b"logo-tab-light\0", b"xrero-tab-lite\0"),
     (b"logo-tab-dark\0", b"xrero-tabdark\0"),
+    # the document tabs' kind icons (16 Nov 2026): the stock blue page -> the Xrero kit's Doc / Sheet / Slide / PDF
+    # pictures (xrero_tab_*.tiff, made by tab_logo.swift); 've' (diagrams) keeps its own
+    (b"icon_tabs_de_active\0", b"xrero_tab_de_active\0"),
+    (b"icon_tabs_de_inactive\0", b"xrero_tab_de_inactive\0"),
+    (b"icon_tabs_se_active\0", b"xrero_tab_se_active\0"),
+    (b"icon_tabs_se_inactive\0", b"xrero_tab_se_inactive\0"),
+    (b"icon_tabs_pe_active\0", b"xrero_tab_pe_active\0"),
+    (b"icon_tabs_pe_inactive\0", b"xrero_tab_pe_inactive\0"),
+    (b"icon_tabs_pdf_active\0", b"xrero_tab_pdf_active\0"),
+    (b"icon_tabs_pdf_inactive\0", b"xrero_tab_pdf_inactive\0"),
     # no analytics to Google under Xrero's name: an RFC 6761 .invalid host never resolves
     (b"google-analytics.com", b"xrerooffline.invalid"),
     (b"https://onlyoffice.com/desktopeditors.aspx\0", None),
@@ -112,6 +152,158 @@ for nib in nibs:
         log("storyboard logo:", os.path.relpath(nib, RES), n)
 if nib_hits == 0:
     raise SystemExit("storyboard tab logo reference not found")
+
+
+# The title bar's download indicator (16 Nov 2026, found in the Arabic store pictures, located by the title bar's
+# accessibility dump of build-mac run 43772417382): the storyboard puts a download box (downloadBackgroundView: an image
+# view + a button, 32 points wide) at the trailing end of the title bar, past the right edge of the window - left to right
+# it is never on screen. Right to left the title bar is mirrored and the box lands inside the window at its left end:
+# a grey square with a light-blue bar in every Arabic window. The box is archived hidden (NSvFlags hidden bit), so it
+# is not drawn in either direction - as left to right, where it never comes on screen; the Mac app has no cloud
+# downloads for it to show. A NIBArchive cannot change a value's size in place (the flags grow from 2 to 4 bytes), so the
+# storyboard file is written again from its parts.
+# Under the box (run 43773855657) sits the cloud account button (userProfileButton) the same way: a faint grey person at
+# the left end of right-to-left windows. The app shows that button itself (archived hidden it still came back, run
+# 43775991617), so its two storyboard pictures (icon-login_normal / _hover, named only in this storyboard) become
+# transparent ones of the same name length; the Mac app has no cloud account for it.
+def nib_read(b):
+    """NIBArchive -> dict: header words, sections (objects/keys/values/classes) as lists, section order"""
+    import struct
+    if b[:10] != b"NIBArchive":
+        return None
+    hdr = list(struct.unpack("<10I", b[10:50]))
+    _, _, oc, oo, kc, ko, vc, vo, cc, co = hdr
+
+    def varint(p):
+        v = s = 0
+        while True:
+            x = b[p]; p += 1
+            v |= (x & 0x7f) << s; s += 7
+            if x & 0x80:
+                return v, p
+    size = {0: 1, 1: 2, 2: 4, 3: 8, 4: 0, 5: 0, 6: 4, 7: 8, 9: 0, 10: 4}
+    objs, p = [], oo
+    for _ in range(oc):
+        c, p = varint(p); vi, p = varint(p); n, p = varint(p)
+        objs.append([c, vi, n])
+    keys, p = [], ko
+    for _ in range(kc):
+        n, p = varint(p); keys.append(bytes(b[p:p + n])); p += n
+    vals, p = [], vo
+    for _ in range(vc):
+        k, p = varint(p); t = b[p]; p += 1
+        if t == 8:
+            n, p = varint(p); data = bytes(b[p:p + n]); p += n
+        else:
+            data = bytes(b[p:p + size[t]]); p += size[t]
+        vals.append([k, t, data])
+    classes, p = [], co
+    for _ in range(cc):
+        n, p = varint(p); ex, p = varint(p)
+        extras = bytes(b[p:p + 4 * ex]); p += 4 * ex
+        classes.append([ex, extras, bytes(b[p:p + n])]); p += n
+    order = [name for _, name in sorted([(oo, "objects"), (ko, "keys"), (vo, "values"), (co, "classes")])]
+    return {"hdr": hdr, "objects": objs, "keys": keys, "values": vals, "classes": classes, "order": order}
+
+
+def nib_write(n):
+    import struct
+
+    def varint(v):
+        out = bytearray()
+        while True:
+            x = v & 0x7f; v >>= 7
+            if v == 0:
+                out.append(x | 0x80)
+                return bytes(out)
+            out.append(x)
+    sec = {
+        "objects": b"".join(varint(c) + varint(vi) + varint(k) for c, vi, k in n["objects"]),
+        "keys": b"".join(varint(len(k)) + k for k in n["keys"]),
+        "values": b"".join(varint(k) + bytes([t]) + ((varint(len(d)) + d) if t == 8 else d) for k, t, d in n["values"]),
+        "classes": b"".join(varint(len(name)) + varint(ex) + extras + name for ex, extras, name in n["classes"]),
+    }
+    off, body, at = {}, b"", 50
+    for name in n["order"]:
+        off[name] = at; body += sec[name]; at += len(sec[name])
+    h = n["hdr"]
+    hdr = [h[0], h[1], len(n["objects"]), off["objects"], len(n["keys"]), off["keys"],
+           len(n["values"]), off["values"], len(n["classes"]), off["classes"]]
+    return b"NIBArchive" + struct.pack("<10I", *hdr) + body
+
+
+def nib_hide_outlets(b, outlets):
+    """the storyboard bytes with the views behind <outlets> archived hidden (None: none of them here)"""
+    import struct
+    n = nib_read(b)
+    if not n or nib_write(n) != bytes(b):            # only a storyboard this code reads back byte for byte
+        return None
+    keys = [k.decode("latin1") for k in n["keys"]]
+    cls = [name.rstrip(b"\0").decode("latin1") for _, _, name in n["classes"]]
+
+    def fields(i):
+        c, vi, cnt = n["objects"][i]
+        return [(keys[k], t, d, vi + j) for j, (k, t, d) in enumerate(n["values"][vi:vi + cnt])]
+
+    def ref(d):
+        return struct.unpack("<I", d)[0]
+
+    def string(i):
+        for k, t, d, _ in fields(i):
+            if k == "NS.bytes" and t == 8:
+                return d.decode("utf-8", "replace")
+        return None
+    hits = 0
+    for i, (c, _, _) in enumerate(n["objects"]):
+        if cls[c] != "NSNibOutletConnector":
+            continue
+        f = {k: (t, d) for k, t, d, _ in fields(i)}
+        if f.get("NSLabel", (0,))[0] != 10 or string(ref(f["NSLabel"][1])) not in outlets:
+            continue
+        box = ref(f["NSDestination"][1])
+        for k, t, d, at in fields(box):
+            if k == "NSvFlags":
+                v = struct.unpack({0: "<b", 1: "<h", 2: "<i", 3: "<q"}[t], d)[0]
+                n["values"][at][1] = 2
+                n["values"][at][2] = struct.pack("<I", (v & 0xffffffff) | 0x80000000)
+                hits += 1
+    return (nib_write(n), hits) if hits else None
+
+
+hide_hits = 0
+for nib in nibs:
+    b = open(nib, "rb").read()
+    if b"downloadBackgroundView" not in b:
+        continue
+    r = nib_hide_outlets(b, ("downloadBackgroundView",))
+    if not r:
+        continue
+    nb = r[0]
+    # (NIBArchive strings: a varint length, 0x80 | n for n < 128, then the bytes)
+    for old, new in ((b"\x91icon-login_normal", b"\x91xr-noaccount-norm"), (b"\x90icon-login_hover", b"\x90xr-noaccount-hov")):
+        if nb.count(old) != 1 or len(old) != len(new):
+            raise SystemExit("title bar account button picture %r: found %d" % (old, nb.count(old)))
+        nb = nb.replace(old, new)
+    open(nib, "wb").write(nb)
+    hide_hits += r[1]
+    log("title bar: download box archived hidden, account button pictures transparent:", os.path.relpath(nib, RES),
+        len(b), "->", len(nb), "bytes")
+if hide_hits != 1:
+    raise SystemExit("title bar download box: %d found in the storyboard" % hide_hits)
+
+
+def blank_png(w, h):
+    """a fully transparent w x h PNG"""
+    import struct, zlib
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    raw = b"".join(b"\0" + b"\0\0\0\0" * w for _ in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+for name in ("xr-noaccount-norm", "xr-noaccount-hov"):
+    open(os.path.join(RES, name + ".png"), "wb").write(blank_png(12, 12))
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)
 VALUE = re.compile(r'(=\s*")((?:[^"\\]|\\.)*)(")')
@@ -172,6 +364,151 @@ for sub in ("sdkjs", "web-apps", "sdkjs-plugins", "webext"):
 for b in glob.glob(os.path.join(E, "sdkjs", "*", "sdk-all.bin")) + glob.glob(os.path.join(E, "sdkjs", "*", "sdk-all.cache")):
     os.remove(b)
 log("editors replaced; snapshots removed")
+# Editor header colour: the payload's XR-HEADER block (from the Windows release) paints the top bar of each editor in
+# its own colour (#2B579A blue for documents ...). The Mac app uses the one Xrero teal for all of them (15 Nov 2026).
+TEAL = "#0585A1"
+# The active ribbon tab's underline (round 3 of the store pictures, 16 Nov 2026): the tabs sit on the header, and the
+# underline kept each editor's own colour (--highlight-toolbar-tab-underline-*: #446995 documents, #3A8056
+# spreadsheets, #B75B44 presentations, #AA5252 PDF) - on the one teal the documents and spreadsheet underlines all but
+# disappeared, so no tab looked active. White, like the tab names, in all four (XR-TABLINE; only the tab underline
+# uses these variables: web-apps toolbar.less .tab-toolbar-color)
+# Run 32 measured the variables' own colours on the Mac even with them set !important on .theme-white (the same file
+# and selector as the teal header, and white in Chrome with this stylesheet alone): something the Mac app adds at run
+# time sets them closer to the tabs. So the underline itself is white too, under the same theme (where the header is
+# teal: XR-HEADER above), for the line and for its hover preview.
+TABLINE = ("/*XR-TABLINE*/.theme-white{" + "".join("--highlight-toolbar-tab-underline-%s:#fff!important;" % k for k in
+                                                     ("document", "spreadsheet", "presentation", "pdf", "visio")) +
+           "}.theme-white .toolbar .tabs li:after,.theme-white .toolbar .tabs li.ribtab:after,"
+           ".theme-white .toolbar.editor-native-color .tabs li:after{border-top-color:#fff!important}/*XR-TABLINE-END*/")
+n_hdr = n_line = 0
+for css in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "resources", "css", "app.css")):
+    t = open(css, encoding="utf-8", errors="surrogateescape").read()
+    def teal(m):
+        b = re.sub(r"(--toolbar-header-(?:document|spreadsheet|presentation|pdf|visio):)\s*#[0-9A-Fa-f]{3,8}", r"\g<1>" + TEAL, m.group(0))
+        return b.replace("/*XR-HEADER-END*/", "/*XR-HEADER-END*/" + TABLINE) if "/*XR-TABLINE*/" not in t else b
+    t2 = re.sub(r"/\*XR-HEADER\*/.*?/\*XR-HEADER-END\*/", teal, t, flags=re.S)
+    if t2 != t:
+        open(css, "w", encoding="utf-8", errors="surrogateescape").write(t2)
+        n_hdr += 1
+        n_line += "/*XR-TABLINE*/" in t2
+log("editor header colour -> Xrero teal in", n_hdr, "stylesheets; white tab underline in", n_line)
+if n_line < 4:
+    raise SystemExit("tab underline: expected the four editors' app.css, changed %d" % n_line)
+
+# The window title (the file name over the ribbon) in the right-to-left interface (round 3 of the store pictures): the
+# header centres the title by padding its box by the difference between the space on its left and on its right
+# (Header.js updateDocNamePosition). Both measures are physical - "left" = the box's left offset, "right" = the width of
+# the next header group - so right to left, where the next group is on the LEFT and the quick-access buttons on the
+# right, both measured the left side: the title was centred in the space beside the buttons, 90 pt left of the window's
+# centre in every Arabic editor. Right to left the two sides now swap: left = the next group, right = the groups before
+# the box (on its right). Left to right nothing changes. (XR-TITLE-RTL; Mac bundle only)
+HDR = os.path.join(E, "web-apps", "apps", "common", "main", "lib", "view", "Header.js")
+s = open(HDR, encoding="utf-8").read()
+s, n_title = re.subn(
+    r"var _left_width = Common\.Utils\.getPosition\(\$parent\)\.left,\s*_right_width = \$parent\.next\(\)\.outerWidth\(\)",
+    "var _xrRtl = !!(Common.UI.isRTL && Common.UI.isRTL()), /*XR-TITLE-RTL*/\n"
+    "                        _left_width = _xrRtl ? $parent.next().outerWidth() : Common.Utils.getPosition($parent).left,\n"
+    "                        _right_width = _xrRtl ? _.reduce($parent.prevAll().toArray(), function (sum, e) { return sum + $(e).outerWidth(); }, 0)"
+    " : $parent.next().outerWidth()", s)
+if n_title != 2:
+    raise SystemExit("window title centring (Header.js updateDocNamePosition): expected 2 places, found %d" % n_title)
+open(HDR, "w", encoding="utf-8").write(s)
+log("window title centred right to left (Header.js):", n_title, "places")
+
+# Arabic wording in the editors (16 Nov 2026, store-picture review; Mac bundle only, the Windows payload is unchanged):
+#  - status bar "Word count": "تعداد الكلمات" (enumeration of the words) -> "عدد الكلمات"
+#  - the AI ribbon tab (AI plugin: buttonMainToolbar.text = "AI", shown through the plugin's own translation table,
+#    which has no "AI" entry for Arabic) -> "الذكاء الاصطناعي", as the editors' own Arabic text already says
+import json
+n_ar = 0
+for f in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "locale", "ar.json")):
+    t = open(f, encoding="utf-8").read()
+    t2 = t.replace('"تعداد الكلمات"', '"عدد الكلمات"')
+    if t2 != t:
+        open(f, "w", encoding="utf-8").write(t2)
+        n_ar += 1
+AI_AR = "الذكاء الاصطناعي"
+for f in glob.glob(os.path.join(E, "sdkjs-plugins", "*", "translations", "ar-SA.json")):
+    plug = os.path.dirname(os.path.dirname(f))
+    try:
+        cfg = json.load(open(os.path.join(plug, "config.json"), encoding="utf-8"))
+    except Exception:
+        continue
+    if cfg.get("name") != "AI":
+        continue
+    tr = json.load(open(f, encoding="utf-8"))
+    tr["AI"] = AI_AR
+    json.dump(tr, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    cfg.setdefault("nameLocale", {})["ar-SA"] = AI_AR
+    cfg["nameLocale"]["ar"] = AI_AR
+    json.dump(cfg, open(os.path.join(plug, "config.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    n_ar += 1
+log("Arabic wording (word count, AI tab):", n_ar, "files")
+if n_ar < 2:
+    raise SystemExit("Arabic wording: expected the documenteditor ar.json and the AI plugin, changed %d" % n_ar)
+# (16 Nov 2026, store pictures 3-5) the PDF editor's Arabic ribbon showed its Collaboration tab in English: the payload's
+# pdfeditor ar.json keeps "Collaboration" there; the document and presentation editors' Arabic text is "التعاون"
+n_pdf_ar = 0
+for f in glob.glob(os.path.join(E, "web-apps", "apps", "pdfeditor", "main", "locale", "ar.json")):
+    t = open(f, encoding="utf-8").read()
+    t2 = re.sub(r'("PDFE\.Views\.Toolbar\.textTabCollaboration"\s*:\s*)"Collaboration"', '\\1"التعاون"', t)
+    if t2 != t:
+        open(f, "w", encoding="utf-8").write(t2)
+        n_pdf_ar += 1
+log("Arabic wording (PDF editor Collaboration tab):", n_pdf_ar, "files")
+# (16 Nov 2026, store pictures round 4) two Arabic labels the pictures show:
+#  - the PDF editor's Comment tab button "Text Comment" (it puts a typed text box on the page) is "تعليق للنص" ("a
+#    comment for the text"); its own tooltip already says "إدراج تعليق نصي" -> "تعليق نصي"
+#  - the presentation editor's notes pane says "اضغط لإضافة ملاحظات" ("press", phone / keyboard wording); a Mac is clicked
+#    -> "انقر لإضافة ملاحظات"
+AR_LABELS = (("pdfeditor", "PDFE.Views.Toolbar.capBtnTextComment", "تعليق للنص", "تعليق نصي"),
+             ("presentationeditor", "PE.Controllers.Main.txtAddNotes", "اضغط لإضافة ملاحظات", "انقر لإضافة ملاحظات"))
+for app, key, old_ar, new_ar in AR_LABELS:
+    hits = glob.glob(os.path.join(E, "web-apps", "apps", app, "main", "locale", "ar.json"))
+    if not hits:
+        raise SystemExit("Arabic label %s: no %s ar.json" % (key, app))
+    for f in hits:
+        t = open(f, encoding="utf-8").read()
+        t2, n = re.subn(r'("%s"\s*:\s*)"%s"' % (re.escape(key), re.escape(old_ar)), '\\1"%s"' % new_ar, t)
+        if not n and not re.search(r'"%s"\s*:\s*"%s"' % (re.escape(key), re.escape(new_ar)), t):
+            raise SystemExit("Arabic label %s: neither %r nor %r in %s" % (key, old_ar, new_ar, f))
+        if t2 != t:
+            open(f, "w", encoding="utf-8").write(t2)
+        log("Arabic label %s -> %s:" % (key, new_ar), n, "changed")
+# (16 Nov 2026, store-picture review) the spreadsheet editor's Arabic ribbon calls the same tab "العمل المشترك"; the
+# document, presentation and (above) PDF editors say "التعاون" - one name for the tab in all four
+n_sse_ar = 0
+for f in glob.glob(os.path.join(E, "web-apps", "apps", "spreadsheeteditor", "main", "locale", "ar.json")):
+    t = open(f, encoding="utf-8").read()
+    t2 = re.sub(r'("SSE\.Views\.Toolbar\.textTabCollaboration"\s*:\s*)"العمل المشترك"', '\\1"التعاون"', t)
+    # (16 Nov 2026, run 28: the wider picture window shows the Home tab's cells group) its "Format" button is left in
+    # English in the payload's Arabic text, and so is the number-format dialog's "Format" label; the other Arabic
+    # strings with this meaning say "التنسيق"
+    t2, n_fmt = re.subn(r'("SSE\.Views\.Toolbar\.textCellFormat"\s*:\s*)"Format"', '\\1"تنسيق"', t2)
+    t2, n_fmt2 = re.subn(r'("Common\.Views\.FormatSettingsDialog\.textFormat"\s*:\s*)"Format"', '\\1"التنسيق"', t2)
+    if re.search(r'"(SSE\.Views\.Toolbar\.textCellFormat|Common\.Views\.FormatSettingsDialog\.textFormat)"\s*:\s*"Format"', t2):
+        raise SystemExit("spreadsheet Format button: still English in " + f)
+    log("Arabic wording (spreadsheet Format button / format dialog):", n_fmt, n_fmt2)
+    if t2 != t:
+        open(f, "w", encoding="utf-8").write(t2)
+        n_sse_ar += 1
+log("Arabic wording (spreadsheet editor Collaboration tab, Format button):", n_sse_ar, "files")
+if n_sse_ar != 1:
+    raise SystemExit("spreadsheet Collaboration tab: expected the spreadsheeteditor ar.json, changed %d" % n_sse_ar)
+# the spreadsheet formula bar in the Arabic (right-to-left) interface took the interface's direction for a formula too:
+# "=SUM(B5:D5)" read "SUM(B5:D5)=". Each line now takes its direction from its own first letter (a formula left to
+# right, Arabic text right to left), still aligned to the right like the rest of the right-to-left bar
+FBIDI = ("/*XR-FBIDI*/.rtl #cell-editing-box .ce-group-content #ce-cell-content{unicode-bidi:plaintext;text-align:right}"
+         "/*XR-FBIDI-END*/")
+n_fb = 0
+for css in glob.glob(os.path.join(E, "web-apps", "apps", "spreadsheeteditor", "main", "resources", "css", "app.css")):
+    t = open(css, encoding="utf-8", errors="surrogateescape").read()
+    if "#ce-cell-content" in t and "/*XR-FBIDI*/" not in t:
+        open(css, "w", encoding="utf-8", errors="surrogateescape").write(t.rstrip() + "\n" + FBIDI + "\n")
+        n_fb += 1
+log("formula bar direction (right-to-left interface):", n_fb, "stylesheets")
+if n_fb != 1:
+    raise SystemExit("formula bar direction: expected the spreadsheeteditor app.css, changed %d" % n_fb)
 
 # Hide the Xrero header controls that call Windows-only native commands (PDF->Word converter, Designs dialog,
 # EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share) - on Mac they would be dead buttons.
@@ -183,30 +520,110 @@ ACCT_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "w
 if "/*XR-ACCT-START*/" not in ACCT_JS or "/*XR-ACCT-END*/" not in ACCT_JS:
     raise SystemExit("web/xr-account.js markers missing")
 HOME_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "xr-home.js"), encoding="utf-8").read()
+HOME_JS = HOME_JS.replace("__XR_VERSION__", VERSION)          # the Mac app's own version in the About window
 if "/*XR-HOME-START*/" not in HOME_JS or "/*XR-HOME-END*/" not in HOME_JS:
     raise SystemExit("web/xr-home.js markers missing")
 MAC_JS = r"""
 /*XR-MAC-START*/
 (function(){
   if (!/Mac/i.test(navigator.platform || '')) return;
-  var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-designs-launch,#xr-design-ov{display:none!important}';
+  var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-designs-launch,#xr-design-ov{display:none!important}' +
+    // the account chip's initials in the Mac system font (its Windows face is Segoe UI, absent on a Mac)
+    '#xr-hdr-btns .xr-ava{font:600 10.5px/24px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif!important;letter-spacing:.2px}' +
+    // XR-PRESENT (round 3 of the store pictures): the presentation editor's red Present button (the payload's
+    // stylePresentButton) - its label ran into the split divider (Bootstrap's ".btn-group .btn + .btn" margin wins over
+    // the payload's 7 px) and its chevron was half dark on the red (only the top border was made white). The label in
+    // the Mac system font (its Windows face, Segoe UI, is absent), 9 px before the divider; the chevron white
+    '#slot-status-btn-preview .xr-present-btn .xr-present-label{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif!important;margin-inline-end:9px!important}' +
+    '#slot-status-btn-preview .xr-present-btn .dropdown-toggle .caret{border-color:#fff!important}';
   function add(){
     if (document.getElementById('xr-mac-css')) return;
     var s = document.createElement('style'); s.id = 'xr-mac-css'; s.textContent = css;
     (document.head || document.documentElement).appendChild(s);
   }
   add(); document.addEventListener('DOMContentLoaded', add);
+  // ONLYOFFICE's first-run "New: Paste options / Multipage view / Chart tab ..." tips (TooltipManager, isNewFeature)
+  // announce the engine's release news on top of the user's document the first time each editor opens. Same as the
+  // iOS app (ios/web/xr-host.js noFeatureTips): their "already seen" keys - '<de|sse|pe|pdfe>-help-tip-*' and the
+  // 'help-tip-*' New-labels - read as seen. Only these announcement keys: the features themselves stay, and the real
+  // warnings (connection lost, read-only, licence ...) have no such key and still show.
+  (function noFeatureTips(){
+    var re = /(^|-)help-tip-/;
+    try {
+      var gi = Storage.prototype.getItem;
+      Storage.prototype.getItem = function (k) { return re.test(String(k)) ? '1' : gi.apply(this, arguments); };
+    } catch (e) {}
+    var n = 0, t = setInterval(function () {          // the editors' own store too (used when localStorage is off)
+      var ls = window.Common && Common.localStorage;
+      if (ls && ls.getItem && !ls.getItem.__xr) {
+        var g = ls.getItem;
+        ls.getItem = function (k) { return re.test(String(k)) ? '1' : g.apply(this, arguments); };
+        ls.getItem.__xr = true;
+      }
+      if (++n > 1200) clearInterval(t);
+    }, 25);
+    window.__xrNoFeatureTips = true;
+  })();
+  // PDF forms (sdkjs 9.4): Enter on a focused check box or radio button - the keyboard way to tick it - changed the
+  // box on screen only. CPDFDoc.EnterDownActiveField calls the box's onMouseUp() outside an editing action and never
+  // commits it, so Save wrote the box as "Off" (store capture run 28: ticked in the app, "Off" in the saved file and
+  // after reopening) and the editor logged "changesError". A mouse click goes through CPDFDoc.OnMouseUpField: the
+  // same toggle inside DoAction, then the commit. Enter on a box now takes that path; every other field keeps the
+  // original function. (16 Nov 2026; Mac bundle only)
+  (function pdfKeyTick(){
+    var n = 0, t = setInterval(function () {
+      var P = window.AscPDF, D = P && P.CPDFDoc && P.CPDFDoc.prototype, T = P && P.FIELD_TYPES;
+      if (D && T && D.EnterDownActiveField && D.OnMouseUpField) {
+        clearInterval(t);
+        if (D.EnterDownActiveField.__xr) return;
+        var orig = D.EnterDownActiveField;
+        D.EnterDownActiveField = function () {
+          var f = this.activeForm, k = f && f.GetType && f.GetType();
+          if (f && f.IsInForm && f.IsInForm() && (k === T.checkbox || k === T.radiobutton)) {
+            if (this.SetGlobalHistory) this.SetGlobalHistory();
+            f.SetInForm(false);
+            this.GetController().resetSelection();
+            this.OnMouseUpField(f);
+            window.__xrPdfKeyTick = (window.__xrPdfKeyTick || 0) + 1;
+            return;
+          }
+          return orig.apply(this, arguments);
+        };
+        D.EnterDownActiveField.__xr = true;
+      } else if (++n > 2400) clearInterval(t);
+    }, 25);
+  })();
 })();
 /*XR-MAC-END*/
 """
+# the editors' account chip (the payload's header): the initials of an Arabic name skip its article, as on the start
+# page (web/xr-account.js): "فريق المشاريع" -> "فم", not "فا" (16 Nov 2026; Mac bundle only)
+INI_OLD = "var p=n.split(/\\s+/); return ((p[0][0]||'')+(p.length>1?(p[p.length-1][0]||''):'')).toUpperCase(); }"
+INI_NEW = ("var p=n.split(/\\s+/); var i1=function(w){return /^\\u0627\\u0644[\\u0621-\\u064A]{2,}/.test(w)?w[2]:(w[0]||'');}; "
+           "return (i1(p[0])+(p.length>1?i1(p[p.length-1]):'')).toUpperCase(); }")
+# the Present button's Arabic label (round 3): "عرض تقديمي" is the noun "a presentation" - the name of the Presentation
+# app on the start page - on a button that starts the slide show; "بدء العرض" (start the show), the words of the
+# button's own tooltip in the editor's Arabic text (PE.Views.Statusbar.tipPreview)
+PRESENT_OLD = "var txt=(lang()==='en' ? 'Present' : 'عرض تقديمي');"
+PRESENT_NEW = "var txt=(lang()==='en' ? 'Present' : 'بدء العرض');"
+n_ini = n_present = 0
 for e in ("documenteditor", "spreadsheeteditor", "presentationeditor", "pdfeditor"):
     f = os.path.join(E, "web-apps", "apps", e, "main", "app.js")
     if os.path.exists(f):
         s = open(f, encoding="utf-8").read()
+        s = s.replace(INI_OLD, INI_NEW)
+        n_ini += INI_NEW in s
+        s = s.replace(PRESENT_OLD, PRESENT_NEW)
+        n_present += e == "presentationeditor" and PRESENT_NEW in s
         s = re.sub(r"\n?/\*XR-MAC-START\*/.*?/\*XR-MAC-END\*/\n?", "", s, flags=re.S)
         s = re.sub(r"\n?/\*XR-ACCT-START\*/.*?/\*XR-ACCT-END\*/\n?", "", s, flags=re.S)
         open(f, "w", encoding="utf-8").write(s.rstrip() + "\n" + MAC_JS + ACCT_JS + "\n")
-log("mac header shim + Xrero account appended to app.js")
+log("mac header shim (+ no first-run feature tips) + Xrero account appended to app.js; Arabic initials:", n_ini, "editors")
+if n_ini != 4:
+    raise SystemExit("account chip initials: expected the four editors' app.js, changed %d" % n_ini)
+if n_present != 1:
+    raise SystemExit("Present button Arabic label: not found in the presentation editor's app.js")
+log("Present button: Arabic label 'بدء العرض'")
 
 # ---------------------------------------------------------------- start page
 login = os.path.join(RES, "login", "index.html")

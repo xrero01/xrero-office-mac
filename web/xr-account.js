@@ -29,12 +29,16 @@
     return null;
   }
   function lang() {
-    var v = ls('xr-lang');
-    if (v === 'ar' || v === 'en') return v;
+    // 16 Nov 2026: the page's own ?lang= first - on Mac the app passes its interface language (Settings > Interface
+    // language) to the start page and every editor. 'xr-lang' is what the editors last wrote (the Windows EN/AR switch,
+    // hidden on Mac): read first, it kept the old language after a switch - English card + the sign-in pill over the
+    // Arabic sidebar's Home item.
     try {
       var l = (new URLSearchParams(location.search).get('lang') || '').toLowerCase();
       if (l) return l.indexOf('ar') === 0 ? 'ar' : 'en';
     } catch (e) {}
+    var v = ls('xr-lang');
+    if (v === 'ar' || v === 'en') return v;
     return (navigator.language || '').toLowerCase().indexOf('ar') === 0 ? 'ar' : 'en';
   }
   var S = {
@@ -147,8 +151,17 @@
     '@media (prefers-color-scheme: dark){#xr-acct-ov .c{background:#2b2b2b;color:#eee}#xr-acct-ov p,#xr-acct-ov .who span{color:#aaa}' +
     '#xr-acct-ov input{background:#1f1f1f;color:#eee;border-color:#555}#xr-acct-ov .tabs{background:#3a3a3a}' +
     '#xr-acct-ov .tabs button{color:#ddd}#xr-acct-ov .tabs button.on{background:#555}}' +
-    '#xr-acct-start{position:fixed;top:10px;z-index:2147483000;border:1px solid #cfd6d9;background:#fff;color:#0585A1;' +
-    'border-radius:16px;padding:5px 13px;font:600 12px -apple-system,BlinkMacSystemFont,Arial,sans-serif;cursor:pointer}' +
+    // the start page's account pill (16 Nov 2026): 30 px high, the account's initials in a teal circle + its name
+    // (signed in) or a person glyph + "Sign in"; xr-home.js keeps the app cards 16 px under it
+    '#xr-acct-start{position:fixed;top:12px;z-index:2147483000;box-sizing:border-box;height:30px;max-width:240px;display:flex;' +
+    'align-items:center;gap:7px;border:1px solid #cfd6d9;background:#fff;color:#0b3f4b;border-radius:15px;' +
+    'padding-block:0;padding-inline:3px 12px;font:600 12px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;' +
+    'cursor:pointer;white-space:nowrap}' +
+    '#xr-acct-start:hover{background:#f2f7f8}' +
+    '#xr-acct-start .av{flex:none;width:22px;height:22px;border-radius:50%;background:#0585A1;color:#fff;display:flex;' +
+    'align-items:center;justify-content:center;font:700 9.5px/1 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;letter-spacing:.2px}' +
+    '#xr-acct-start .av svg{width:14px;height:14px;fill:#fff}' +
+    '#xr-acct-start .nm{overflow:hidden;text-overflow:ellipsis}' +
     '#xr-b-signin-mac{display:inline-flex;align-items:center}';
 
   function css() {
@@ -162,9 +175,12 @@
     if (text !== undefined) e.textContent = text;          // user text is always TEXT, never HTML
     return e;
   }
+  // 16 Nov 2026: an Arabic word's article is skipped ("فريق المشاريع" -> "فم", "محمد الهاشمي" -> "مه"); the initial
+  // of every name with "ال" was "ا" (scripts/patch_bundle.py gives the editors' account chip the same rule)
+  function initial(w) { return /^\u0627\u0644[\u0621-\u064A]{2,}/.test(w) ? w[2] : (w || '?')[0]; }
   function initials(a) {
     var n = (a.name || a.email || '?').trim().split(/\s+/);
-    return ((n[0] || '?')[0] + (n.length > 1 ? n[n.length - 1][0] : '')).toUpperCase();
+    return (initial(n[0]) + (n.length > 1 ? initial(n[n.length - 1]) : '')).toUpperCase();
   }
   function walled() { return REQUIRED && !info(); }
   function close() {
@@ -301,10 +317,19 @@
     }
     var a = info(), t = T(), rtl = lang() === 'ar';
     var label = a ? (a.name || a.email || t.title) : t.chip;
-    if (b.textContent !== label) b.textContent = label;
+    var key = (a ? initials(a) : '-') + '|' + label;
+    if (b.getAttribute('data-k') !== key) {           // account text as TEXT, never HTML
+      b.setAttribute('data-k', key);
+      b.innerHTML = '';
+      var av = el('span', { 'class': 'av', 'aria-hidden': 'true' });
+      if (a) av.textContent = initials(a);
+      else av.innerHTML = '<svg viewBox="0 0 16 16"><circle cx="8" cy="5.2" r="3"/><path d="M2.5 14c.4-3 2.7-4.8 5.5-4.8s5.1 1.8 5.5 4.8z"/></svg>';
+      b.appendChild(av);
+      b.appendChild(el('span', { 'class': 'nm' }, label));
+    }
     b.setAttribute('aria-label', a ? t.title + ': ' + label : t.chip);
-    b.style.right = rtl ? 'auto' : '14px';
-    b.style.left = rtl ? '14px' : 'auto';
+    b.style.right = rtl ? 'auto' : '16px';
+    b.style.left = rtl ? '16px' : 'auto';
   }
   // editors: the header has its own account chip + menu (shown when signed in); add a Sign in button otherwise
   function editorButton() {

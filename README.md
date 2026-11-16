@@ -13,5 +13,9 @@ editors with the 20.0.9 Arabic PDF fix + Xrero start page), then tests the resul
    bold, Cmd+S, screenshots.
 
 Run: Actions → build-mac → Run workflow. Output: a pre-release with the DMGs + test evidence.
+With **test_only** ticked: Apple silicon only, ad-hoc signed (no Developer ID, no notarization, no release), the UI test
+makes no account on xrero.com (`XR_NO_SIGNUP`), then `mas/store_capture.py` photographs the App Store variant
+(sandboxed test copy, xrero.com blocked): a first-run audit of the four editors + the start page and the demo document
+(`mas/store_demo.docx`, made by `mas/store_demo.py`) in English and Arabic. Evidence + pictures = a run artifact.
 The DMGs are ad-hoc signed (no Apple Developer ID): first launch needs System Settings →
 Privacy & Security → Open Anyway.

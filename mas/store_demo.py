@@ -556,7 +556,10 @@ PDF = {
     "ar": dict(rtl=True, title="طلب حجز قاعة اجتماعات", sub="خدمات المكاتب · الإمارات العربية المتحدة",
                h1="بيانات الطلب", labels=("القسم", "المكتب", "التاريخ", "عدد الحضور"),
                h2="التجهيزات المطلوبة", boxes=("شاشة عرض", "مكالمة فيديو", "ضيافة"), h3="تفاصيل إضافية",
-               note="يُرجى إرسال الطلب قبل موعد الاجتماع بيومَي عمل على الأقل.",
+               # (runs 32-33: the app's PDF viewer leaves the last letter of a right-to-left line out of a mouse
+               # selection that runs past the line's end - here the full stop, so the highlight stopped one letter short.
+               # A no-break space after the full stop is the line's last letter instead: invisible, the sentence the same)
+               note="يُرجى إرسال الطلب قبل موعد الاجتماع بيومَي عمل على الأقل. ",
                h4="خاص بالمكتب", office=("اعتمده", "القاعة")),
 }
 # the fields in tab order (store_capture.py fills them in this order)

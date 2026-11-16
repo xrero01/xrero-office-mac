@@ -612,10 +612,14 @@ def pdf_marks():
     pg = d[0]
     W, rtl = pg.rect.width, LANG == "ar"
     clip = pymupdf.Rect(W - 545, 350, W - 50, 368) if rtl else pymupdf.Rect(50, 350, 545, 368)
-    words = pg.get_text("words", clip=clip)
-    box = pymupdf.Rect(words[0][:4])
-    for wd in words[1:]:
-        box |= pymupdf.Rect(wd[:4])
+    # the line's visible letters (round 3: the Arabic line ends with an invisible no-break space - store_demo.py)
+    box = None
+    for b in pg.get_text("rawdict", clip=clip)["blocks"]:
+        for ln in b.get("lines", []):
+            for s in ln["spans"]:
+                for ch in s["chars"]:
+                    if ch["c"].strip() and ch["c"] != " ":
+                        box = pymupdf.Rect(ch["bbox"]) if box is None else box | pymupdf.Rect(ch["bbox"])
     dr = [pymupdf.Rect(w.rect) for w in pg.widgets() if w.field_name == "date"][0]
     d.close()
     cx, cy, rx, ry = (dr.x0 + dr.x1) / 2, (dr.y0 + dr.y1) / 2, dr.width / 2 + 9, dr.height / 2 + 8

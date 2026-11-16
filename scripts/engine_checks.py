@@ -8,18 +8,27 @@ input into the editor, Cmd+S, a copy opened again from Finder) and the saved fil
 
   pdf_ar_field   ar_form_embedded.pdf: Arabic typed into a text field whose font is an EMBEDDED Arabic font (/DR, like
                  the Windows store demo's /Dubai and like many real Arabic forms) must be SAVED shaped - joined letters,
-                 not separate overlapping ones (APP-BACKLOG 18, HIGH). The saved field is drawn with PyMuPDF and compared
-                 with the same text shaped by MuPDF/HarfBuzz in the same font (ink match >= MATCH_OK). A Latin value in
-                 the same font must stay right, and the copy opened again in the app must show the values. (The
-                 reproduction without the fix: build-mac runs 39-42, this check at ink match 0.44. On the Mac the saved
+                 not separate overlapping ones (APP-BACKLOG 18, HIGH). The value has two lam-alef ligatures ("الإمارات",
+                 "للملاحظات": ligatures take their own path in XR-FIELD-AP). The saved field is drawn with PyMuPDF and
+                 compared with the same text shaped by MuPDF/HarfBuzz in the same font (ink match >= MATCH_OK), and the
+                 saved appearance must hold exactly one outline fill per non-space glyph the editor shaped (counted in
+                 the editor before Save; the ink match alone cannot see one broken ligature). A Latin value in the same
+                 font must stay right (text), and the copy opened again in the app must show the values. (The
+                 reproduction without the fix: build-mac runs 39-42, ink match 0.44 and no outlines. On the Mac the saved
                  appearance is drawn by the converter's sdkjs, so no switch in the editor gives a control round.)
   pdf_first_input  mas/store_demo_form_ar.pdf filled like a user (Tab, type): the first thing typed into the date field
                  must arrive (store NOTES: "the first input typed into the date field after tabbing into it does not
-                 arrive"); the editor's input path is logged (input_log). Done twice: with the Mac fix switched off in
-                 that editor (window.__xrNoFirstInputFix - the control, it must still lose the input) and on.
-  pdf_bold_lamalef  ar_bold_lamalef.pdf (bold / regular / bold without hinting, IBM Plex Sans Arabic subsets): the app's
-                 page drawing of each line compared with MuPDF's (record; the page is drawn by the app's native
-                 renderer, not by the web layer).
+                 arrive"); the editor's input path is logged (input_log). Four rounds: the value typed as one piece with
+                 the Mac fix switched off in that editor (window.__xrNoFirstInputFix - the control, it must still lose
+                 the input) and on (the fix must have acted); then the same with the field's font load made truly
+                 asynchronous (the font loader's callback delayed by SLOW_MS) and the date typed key by key, KEY_GAP_MS
+                 apart: off it must still lose input, on every key must arrive in its order through the held-input
+                 queue (XR-FIELD-FIRST-INPUT layer 2).
+  pdf_bold_lamalef  ar_bold_lamalef.pdf (bold / regular / bold without hinting, IBM Plex Sans Arabic subsets) and the
+                 run-27 form's 12.5 pt bold headings: the app's page drawing of each line (scrolled into view first)
+                 next to MuPDF's. RECORD ONLY, not fixed: the page is drawn by the app's native renderer, not by the web
+                 layer, and the ink match cannot see one broken ligature (run 42: 0.979 on a visibly broken heading) -
+                 the PNGs are the evidence.
   pptx_lang      mas/store_demo_slides_ar.pptx: the caret in the Arabic title (lang="ar-AE") - the language the editor
                  reports (status bar) must be ar-AE (LCID 14337), not ar-SA (store NOTES).
 """
@@ -31,9 +40,12 @@ MATCH_OK = 0.85          # ink match of a shaped Arabic line with its reference,
                          # 2026: unshaped 0.60 / 0.75 (Windows store file), 0.60 (Mac run 42); shaped: the outlines of
                          # XR-FIELD-AP 0.91, text in Mac Arial 1.0)
 MATCH_K = 2
-AR_CLIENT = "مؤسسة النموذج التجارية"
+AR_CLIENT = "مؤسسة الإمارات للملاحظات"       # two lam-alef ligatures (لإ, لا)
 LATIN_REF = "XO-2026-014"
 AR_OFFICE = "الشارقة"
+DATE = "24/11/2026"
+SLOW_MS = 500            # the forced-asynchronous font load: the loader's callback this much later
+KEY_GAP_MS = 30          # the key-by-key date in the asynchronous rounds
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
@@ -52,7 +64,7 @@ READY_JS = r"""(function(tag){""" + FRAME + r"""
 PDF_GEOM_JS = r"""(function(){""" + FRAME + r"""var o={fields:{}};
   try{var doc=api.getPDFDoc(),v=api.getDocumentRenderer(),det=v.getPageLikeDetector(0),rp=w.AscCommon.AscBrowser.retinaPixelRatio||1;
     var cv=v.canvas.getBoundingClientRect(),W=v.file.pages[0].W,sc=(det.w/rp)/W,pl=cv.left+det.x/rp,pt=cv.top+det.y/rp;
-    o.org=[fr.left+pl,fr.top+pt];o.sc=sc;o.page_w=W;
+    o.org=[fr.left+pl,fr.top+pt];o.sc=sc;o.page_w=W;o.view=[fr.left+cv.left,fr.top+cv.top,fr.left+cv.right,fr.top+cv.bottom];
     doc.widgets.forEach(function(x){var r=x.GetRect();o.fields[x.GetFullName()]={rect:r,
       px:[fr.left+pl+r[0]*sc,fr.top+pt+r[1]*sc,fr.left+pl+r[2]*sc,fr.top+pt+r[3]*sc],
       value:(x.IsChecked?x.IsChecked():x.GetValue()),rtl:x.IsRTL?x.IsRTL():null,align:x.GetAlign?x.GetAlign():null};});
@@ -82,7 +94,7 @@ INPUT_LOG_JS = r"""(function(){""" + FRAME + r"""if(w.__xrInLog)return 'already'
     o[n]=function(){var a=[].slice.call(arguments),r,err='';try{r=g.apply(this,arguments);}catch(e){err=''+e;throw e;}finally{
       push([tag+'.'+n,a.map(s).join(' '),'ret='+s(r)+err,'area='+(ic&&ic.getAreaValue?JSON.stringify(ic.getAreaValue()):'?'),
         'Text='+JSON.stringify(ic?ic.Text:''),'long='+(api.isLongAction?api.isLongAction():'?'),'ro='+(ic?ic.ReadOnlyCounter:''),act()]);}
-      return r;};o[n].__xrw=1;}
+      return r;};o[n].__xrw=1;o[n].__xr=g.__xr;}
   if(ic){var lg=ic.log;ic.log=function(v){push(['ic.log',String(v).slice(0,60)]);};
     ['onInput','onKeyDown','onKeyPress','checkTextInput','addTextCodes','clear','compositeEnd'].forEach(function(n){wrap(ic,n,'ic');});}
   ['checkTextLight','loadFonts','checkText'].forEach(function(n){wrap(FP,n,'fp');});
@@ -91,7 +103,7 @@ INPUT_LOG_JS = r"""(function(){""" + FRAME + r"""if(w.__xrInLog)return 'already'
   if(PD&&PD.checkFieldFont&&!PD.checkFieldFont.__xrl){var cf=PD.checkFieldFont;PD.checkFieldFont=function(fld,cb){
     var before=(this.loadedFonts||[]).join(',');var r=cf.apply(this,arguments);
     if(r===false)push(['doc.checkFieldFont',fld&&fld.GetFullName?fld.GetFullName():'?','cb='+!!cb,'ret=false','loaded='+before,
-      'ranges='+Object.keys((FP&&FP.FontsByRange)||{}).join(',')]);return r;};PD.checkFieldFont.__xrl=1;}
+      'ranges='+Object.keys((FP&&FP.FontsByRange)||{}).join(',')]);return r;};PD.checkFieldFont.__xrl=1;PD.checkFieldFont.__xr=cf.__xr;}
   return 'ok';})()"""
 
 # the Xrero account card (web/xr-account.js) over an editor or the start page: nothing may be typed while it is up
@@ -114,6 +126,40 @@ OUTLINE_PROBE_JS = r"""(function(){""" + FRAME + r"""try{var a=api.getPDFDoc().w
   mgr.LoadStringPathCode(gid,true,0,0,wk);
   return {font:nm,loaded:!!font,same:mgr.m_pFont===font,gid:gid,calls:n,engine:typeof w.AscFonts.FT_Glyph_Get_Measure};
   }catch(e){return 'error: '+e;}})()"""
+
+# the glyphs the editor shaped for a field, as its Save draws them (CBaseField.WriteRenderToBinary: the field's content
+# drawn into a CDocumentRenderer), counted in a throwaway renderer before Save - one per DrawGrapheme glyph (tg). Not
+# through XR-FIELD-AP (the renderer is not flagged), so the count does not depend on the fix it checks.
+SHAPED_JS = r"""(function(name){""" + FRAME + r"""var o={glyphs:0,nonspace:0,ligatures:0,cps:[]};
+  try{var doc=api.getPDFDoc(),v=api.getDocumentRenderer(),f=doc.widgets.filter(function(x){return x.GetFullName()===name;})[0];
+    var T=w.AscPDF.PDF_TRIGGERS_TYPES,c=(T&&f.GetTrigger&&f.GetTrigger(T.Format))?f.contentFormat:f.content;
+    var mem=new w.AscCommon.CMemory(true);mem.Init(1<<18);
+    var dr=v.InitDocRenderer(mem,f.GetPage?f.GetPage():0),tg=dr.tg;
+    dr.tg=function(gid,x,y,cps){var a=[].slice.call(cps||[]);o.glyphs++;
+      if(a.some(function(u){return u!==32&&u!==0xA0&&u!==9;})){o.nonspace++;if(a.length>1)o.ligatures++;}
+      if(o.cps.length<80)o.cps.push(a);return tg.apply(this,arguments);};
+    var old=c.transform;c.transform=new w.AscCommon.CMatrix();
+    try{dr.ClearCacheProps();c.Draw(c.GetAbsolutePage(),dr);dr.ClearCacheProps();}finally{c.transform=old;}
+  }catch(e){o.err=''+e;}return o;})(__NAME__)"""
+
+# the asynchronous rounds: the font loader (doc.fontLoader = AscCommon.g_font_loader) calls back SLOW_MS later, as when the
+# font files are still being read; 'off' puts the loader back
+SLOW_FONTS_JS = r"""(function(op,ms){""" + FRAME + r"""try{var L=w.AscCommon.g_font_loader;
+  if(op==='on'){if(!L.__xrSlowOrig){var o=L.LoadFonts;L.__xrSlowOrig=o;L.LoadFonts=function(fonts,cb){
+      w.__xrSlowLoads=(w.__xrSlowLoads||0)+1;
+      return o.call(this,fonts,function(){var t=this,a=arguments;setTimeout(function(){if(cb)cb.apply(t,a);},ms);});};}
+    return 'slow '+ms+' ms';}
+  if(L.__xrSlowOrig){L.LoadFonts=L.__xrSlowOrig;delete L.__xrSlowOrig;}return 'normal';}catch(e){return 'error: '+e;}})(__OP__,__MS__)"""
+
+# the counters of XR-FIELD-FIRST-INPUT (patch_bundle.py MAC_JS) in this editor
+FIRST_INPUT_STATE_JS = r"""(function(){""" + FRAME + r"""return {off:!!w.__xrNoFirstInputFix,font_sync:w.__xrFieldFontSync||0,
+  held:w.__xrFirstInputHeld||0,retried:w.__xrFirstInputRetried||0,dropped:w.__xrFirstInputDropped||0,slow_loads:w.__xrSlowLoads||0,
+  wrapped:!!(w.AscPDF&&w.AscPDF.CPDFDoc&&w.AscPDF.CPDFDoc.prototype.checkFieldFont.__xr),
+  entry:!!(api&&api.asc_enterText&&api.asc_enterText.__xr)};})()"""
+
+# a PDF page position (points from the top) scrolled to near the top of the viewer
+SCROLL_PDF_JS = r"""(function(y){""" + FRAME + r"""try{var v=api.getDocumentRenderer(),dp=v.drawingPages[0],H=v.file.pages[0].H;
+  v.navigateToPage(0,Math.max(0,(y-60)*dp.H/H));return 'ok';}catch(e){return 'error: '+e;}})(__Y__)"""
 
 SLIDE_JS = r"""(function(op){""" + FRAME + r"""var o={};
   try{var wc=api.WordControl,p=wc.m_oLogicDocument;
@@ -278,8 +324,27 @@ def reference_pix(value, fontfile, size, rect, zoom, rtl=True):
     return pg.get_pixmap(matrix=fz.Matrix(zoom, zoom), clip=box)
 
 
+def glyph_fills(s):
+    """the fills of paths that begin with a moveto in a content stream - glyph outlines, not the field's background
+    (a 're' rectangle) or its clip (ended by 'n')"""
+    s = re.sub(r"\((?:\\.|[^\\)])*\)", " ", s)          # literal and hex strings out
+    s = re.sub(r"<[0-9A-Fa-f\s]*>", " ", s)
+    n, has_m = 0, False
+    for tok in s.split():
+        if tok[0] in "/[]<>" or re.match(r"^[-+.\d]", tok):
+            continue
+        if tok == "m":
+            has_m = True
+        elif tok in ("f", "f*", "F", "B", "B*", "b", "b*"):
+            n += has_m
+            has_m = False
+        elif tok in ("n", "S", "s"):
+            has_m = False
+    return n
+
+
 def ap_summary(d, w):
-    """what the field's saved appearance stream draws: text-showing operators, fonts, filled paths"""
+    """what the field's saved appearance stream draws: text-showing operators, fonts, filled paths, glyph outlines"""
     out = {}
     try:
         m = re.search(r"/N (\d+) 0 R", d.xref_object(w.xref))
@@ -290,6 +355,7 @@ def ap_summary(d, w):
         out["text_ops"] = len(re.findall(r"\bT[jJ]\b", s))
         out["fonts"] = sorted(set(re.findall(r"/([A-Za-z0-9_.+-]+) [0-9.]+ Tf", s)))
         out["fills"] = len(re.findall(r"(?m)(?:^|\s)f\*?(?=\s|$)", s))
+        out["glyph_fills"] = glyph_fills(s)
         out["bytes"] = len(s)
     except Exception as e:
         out["err"] = repr(e)
@@ -415,6 +481,9 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
                 r.setdefault("not_active", []).append([name, st])
                 continue
             await asyncio.sleep(0.6)
+            if await pg.ev(WALL_JS) is not False:                      # never into the account card
+                r["wall_before_typing"] = name
+                return r
             await pg.call("Input.insertText", {"text": val})
             await asyncio.sleep(1.2)
             got = (await pg.ev(ACTIVE_JS) or ["", ""])[1]
@@ -424,6 +493,8 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
                 r["outline_probe"] = await pg.ev(OUTLINE_PROBE_JS)      # (after typing: the field's font is loaded)
                 await pg.shot(os.path.join(evid, "pdf-%s-live-typing.png" % variant), box_of([px], 30))
         r["typed"] = typed
+        # the glyphs the editor shaped for the Arabic value (drawn as its Save draws them), before Save
+        r["shaped"] = await pg.ev(SHAPED_JS.replace("__NAME__", json.dumps("client")))
         g = await pg.ev(PDF_GEOM_JS) or {}
         fbox = box_of([v["px"] for v in (g.get("fields") or {}).values()], 40)
         await pg.shot(os.path.join(evid, "pdf-%s-live.png" % variant), fbox)
@@ -458,13 +529,18 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
 
 
 async def case_pdf_first_input(s, app, evid, out, variant="fixed"):
-    """mas/store_demo_form_ar.pdf, filled like store_capture.py does it (Tab to each field, type each value as one
-    piece): the date field must get its first input. variant 'control' = the Mac fix off in this editor
-    (window.__xrNoFirstInputFix: the original path - it must still show the fault)"""
+    """mas/store_demo_form_ar.pdf, filled like store_capture.py does it (Tab to each field, type each value): the date
+    field must get its first input.
+      'control' / 'fixed'               the date typed as one piece; the font load as the app does it
+      'async_control' / 'async'         the field's font load made truly asynchronous (SLOW_FONTS_JS, callback SLOW_MS
+                                        later) just before the date, which is then typed key by key KEY_GAP_MS apart
+    '*control' = the Mac fix off in this editor (window.__xrNoFirstInputFix: the original path - it must still show the
+    fault, so the checks can tell 'fixed' from 'no fault to fix')"""
     src = os.path.join(ROOT, "mas", "store_demo_form_ar.pdf")
     path = os.path.join(evid, "ar-booking-%s.pdf" % variant)
     shutil.copy(src, path)
     r = {"variant": variant}
+    is_async = variant.startswith("async")
     t = await open_doc(s, app, path, "pdf")
     if not t:
         r["err"] = "the form did not open"
@@ -476,49 +552,96 @@ async def case_pdf_first_input(s, app, evid, out, variant="fixed"):
         r["wall"] = await pg.ev(WALL_JS)
         if r["wall"] is not False:
             return r
-        if variant == "control":
+        if variant.endswith("control"):
             r["switch_off"] = await pg.ev("(function(){" + FRAME + "w.__xrNoFirstInputFix=true;return true;})()")
-        r["fix_present"] = await pg.ev("(function(){" + FRAME + "return !!(api&&api.asc_enterText&&api.asc_enterText.__xr);})()")
+        r["fix_present"] = await pg.ev(FIRST_INPUT_STATE_JS)
         r["log_installed"] = await pg.ev(INPUT_LOG_JS)
         g = await pg.ev(PDF_GEOM_JS) or {}
         org, sc = g.get("org") or [0, 0], g.get("sc") or 1
         await pg.click(org[0] + 24 * sc, org[1] + 118 * sc)        # on the page beside the form (store_capture focus)
         await asyncio.sleep(1.5)
         steps = []
-        for name, v in (("department", "المشاريع"), ("office", "الشارقة"), ("date", "24/11/2026")):
+        for name, v in (("department", "المشاريع"), ("office", "الشارقة"), ("date", DATE)):
             await pg.key(9, "Tab")
             st = await wait_active(pg, name)
             if not (st and st[0] == name and st[2] is True):           # never type anywhere but into this field
                 steps.append([name, "not active", st])
                 break
             await asyncio.sleep(0.8)
-            await pg.call("Input.insertText", {"text": v})
-            await asyncio.sleep(1.5)
+            if await pg.ev(WALL_JS) is not False:                      # never into the account card
+                steps.append([name, "account card up"])
+                break
+            if name == "date" and is_async:
+                r["slow"] = await pg.ev(SLOW_FONTS_JS.replace("__OP__", json.dumps("on")).replace("__MS__", str(SLOW_MS)))
+                for ch in v:                                   # key by key, quickly (no wait for the fonts)
+                    await pg.call("Input.insertText", {"text": ch})
+                    await asyncio.sleep(KEY_GAP_MS / 1000.0)
+                await asyncio.sleep(SLOW_MS / 1000.0 + 2.0)
+                r["slow_off"] = await pg.ev(SLOW_FONTS_JS.replace("__OP__", json.dumps("off")).replace("__MS__", "0"))
+            else:
+                await pg.call("Input.insertText", {"text": v})
+                await asyncio.sleep(1.5)
             got = (await pg.ev(ACTIVE_JS) or ["", ""])[1]
             steps.append([name, v, got, st])
             if name == "date":
                 r["date_first"] = got
-                if got != v:                                   # as a user would: type what is missing, at the start
+                r["state"] = await pg.ev(FIRST_INPUT_STATE_JS)
+                if got != v:                                   # as a user would: type it again over what is there
                     await pg.ev("(function(){" + FRAME + "try{var a=api.getPDFDoc().activeForm;a.content.SelectAll();"
                                 "return 'ok';}catch(e){return ''+e;}})()")
                     await pg.call("Input.insertText", {"text": v})
                     await asyncio.sleep(1.2)
                     steps.append(["date again", v, (await pg.ev(ACTIVE_JS) or ["", ""])[1]])
         r["steps"] = steps
-        r["input_log"] = await pg.ev("(function(){" + FRAME + "return (w.__xrInLog||[]).slice(-120);})()")
-        r["retried"] = await pg.ev("(function(){" + FRAME + "return w.__xrFirstInputRetried||0;})()")
+        r["input_log"] = await pg.ev("(function(){" + FRAME + "return (w.__xrInLog||[]).slice(-160);})()")
+        r["field_font_log"] = [x for x in (r["input_log"] or []) if isinstance(x, list) and len(x) > 1
+                               and x[1] == "doc.checkFieldFont"][-6:]
+        r["retried"] = (r.get("state") or {}).get("retried")
         await pg.shot(os.path.join(evid, "pdf-first-input-%s.png" % variant))
         r["saved"] = await save(pg, path)
     return r
 
 
+LAMALEF_NOTE = ("record only (store NOTES 'bold lam-alef', NOT fixed: the Mac app's native page renderer): each line is "
+                "scrolled into view, then captured; ink_match cannot see one broken ligature (run 42: 0.979 on the "
+                "visibly broken heading) - the PNGs are the evidence")
+
+
+async def scroll_to(pg, y_top):
+    """the PDF page scrolled so that y_top (points from the page top) is near the top of the viewer -> fresh geometry"""
+    st = await pg.ev(SCROLL_PDF_JS.replace("__Y__", "%.2f" % y_top))
+    await asyncio.sleep(1.5)
+    return st, (await pg.ev(PDF_GEOM_JS) or {})
+
+
+def box_in_view(box, view):
+    return bool(view) and box[0] >= view[0] - 1 and box[1] >= view[1] - 1 and box[2] <= view[2] + 1 and box[3] <= view[3] + 1
+
+
+async def capture_line(pg, fz, d, rc, app_png, mu_png, dpr, shot_scale):
+    """one line (rc: PDF rect, points) as the app draws it, after scrolling it into view, and as MuPDF draws it"""
+    st, g = await scroll_to(pg, rc.y0)
+    org, sc = g.get("org") or [0, 0], g.get("sc") or 1
+    box = [org[0] + rc.x0 * sc, org[1] + rc.y0 * sc, org[0] + rc.x1 * sc, org[1] + rc.y1 * sc]
+    rec = {"scroll": st, "in_view": box_in_view(box, g.get("view")), "box": [round(v) for v in box], "view": g.get("view")}
+    await pg.shot(app_png, box, scale=shot_scale)
+    d[0].get_pixmap(matrix=fz.Matrix(sc * dpr, sc * dpr), clip=rc).save(mu_png)
+    if rec["in_view"]:
+        try:
+            rec["ink_match"] = ink_match(ink_mask(fz.Pixmap(app_png)), ink_mask(fz.Pixmap(mu_png)), 2)
+        except Exception as e:
+            rec["ink_match"] = repr(e)
+    return rec
+
+
 async def case_pdf_lamalef(s, app, evid, out):
-    """ar_bold_lamalef.pdf: each line as the app draws it (its page canvas) and as MuPDF draws it"""
+    """ar_bold_lamalef.pdf and the run-27 form's bold headings: each line as the app draws it (its page canvas, the line
+    scrolled into view first) and as MuPDF draws it. Record only (LAMALEF_NOTE)."""
     fz = _pymupdf()
     src = os.path.join(ROOT, "test", "inputs", "ar_bold_lamalef.pdf")
     path = os.path.join(evid, "ar-bold-lamalef.pdf")
     shutil.copy(src, path)
-    r = {}
+    r = {"note": LAMALEF_NOTE}
     t = await open_doc(s, app, path, "pdf")
     if not t:
         return {"err": "did not open"}
@@ -528,28 +651,20 @@ async def case_pdf_lamalef(s, app, evid, out):
         r["ready"] = await ready(pg, "pdf")
         await asyncio.sleep(3)
         r["wall"] = await pg.ev(WALL_JS)
-        g = await pg.ev(PDF_GEOM_JS) or {}
-        org, sc = g.get("org") or [0, 0], g.get("sc") or 1
-        r["sc"] = sc
         d = fz.open(path)
         W = d[0].rect.width
         for i, name in enumerate(("bold", "regular", "bold_nohint")):
             y0, y1 = 40 + 70 * i, 90 + 70 * i                     # make_engine_inputs.py LAMALEF_Y
-            box = [org[0] + 50 * sc, org[1] + y0 * sc, org[0] + (W - 50) * sc, org[1] + y1 * sc]
-            app_png = os.path.join(evid, "lamalef-%s-app.png" % name)
-            await pg.shot(app_png, box)
-            mu = d[0].get_pixmap(matrix=fz.Matrix(2 * sc, 2 * sc), clip=fz.Rect(50, y0, W - 50, y1))
-            mu.save(os.path.join(evid, "lamalef-%s-mupdf.png" % name))
-            try:
-                r[name] = ink_match(ink_mask(fz.Pixmap(app_png)), ink_mask(mu), 2)
-            except Exception as e:
-                r[name] = repr(e)
+            r[name] = await capture_line(pg, fz, d, fz.Rect(50, y0, W - 50, y1),
+                                         os.path.join(evid, "lamalef-%s-app.png" % name),
+                                         os.path.join(evid, "lamalef-%s-mupdf.png" % name), 2, 2)
         d.close()
         r["engine"] = await pg.ev("(function(){" + FRAME + "try{return typeof w.g_native_drawing_file+'/'+"
                                   "typeof (w.AscViewer&&w.AscViewer.CDrawingFile);}catch(e){return ''+e;}})()")
     # the store form of run 27 (mas/store_demo_form_ar.pdf at a81a224, kept as test/inputs/ar_form_bold_heading.pdf):
     # its 12.5 pt bold headings "ملاحظات" / "للاستخدام الإداري", drawn by the app at device scale 1 and 2 (run 27's
-    # picture was the device-scale-2 page: "مادحظات")
+    # picture was the device-scale-2 page: "مادحظات"); each heading is scrolled into view before it is captured (runs 42
+    # and 43 captured the second one out of view: an empty box)
     src2 = os.path.join(ROOT, "test", "inputs", "ar_form_bold_heading.pdf")
     path2 = os.path.join(evid, "ar-form-bold-heading.pdf")
     shutil.copy(src2, path2)
@@ -567,24 +682,17 @@ async def case_pdf_lamalef(s, app, evid, out):
                     for sp in ln["spans"]:
                         if "Bol" in sp["font"] and any(c in sp["text"] for c in "ﻻﻼﻵﻶﻷﻸﻹﻺ"):
                             heads.append(fz.Rect(sp["bbox"]) + (-3, -2, 3, 2))
+            r["headings"] = len(heads)
             for scale in (1, 2):
                 vw = await pg.ev("[innerWidth, innerHeight]") or [1200, 800]
                 if scale == 2:
                     await pg.call("Emulation.setDeviceMetricsOverride", {"width": vw[0], "height": vw[1],
                                                                          "deviceScaleFactor": 2, "mobile": False})
                     await asyncio.sleep(4)
-                g = await pg.ev(PDF_GEOM_JS) or {}
-                org, sc = g.get("org") or [0, 0], g.get("sc") or 1
                 for i, rc in enumerate(heads):
-                    box = [org[0] + rc.x0 * sc, org[1] + rc.y0 * sc, org[0] + rc.x1 * sc, org[1] + rc.y1 * sc]
-                    app_png = os.path.join(evid, "bold-heading-%d-dpr%d-app.png" % (i, scale))
-                    await pg.shot(app_png, box, scale=1)
-                    mu = d[0].get_pixmap(matrix=fz.Matrix(sc * scale, sc * scale), clip=rc)
-                    mu.save(os.path.join(evid, "bold-heading-%d-dpr%d-mupdf.png" % (i, scale)))
-                    try:
-                        r["heading_%d_dpr%d" % (i, scale)] = ink_match(ink_mask(fz.Pixmap(app_png)), ink_mask(mu), 2)
-                    except Exception as e:
-                        r["heading_%d_dpr%d" % (i, scale)] = repr(e)
+                    r["heading_%d_dpr%d" % (i, scale)] = await capture_line(
+                        pg, fz, d, rc, os.path.join(evid, "bold-heading-%d-dpr%d-app.png" % (i, scale)),
+                        os.path.join(evid, "bold-heading-%d-dpr%d-mupdf.png" % (i, scale)), scale, 1)
                 if scale == 2:
                     await pg.call("Emulation.clearDeviceMetricsOverride")
                     await asyncio.sleep(2)
@@ -658,9 +766,12 @@ async def run(exe, app, arch, out_dir, ok):
                         await asyncio.sleep(4)
             else:
                 out["local_session"] = "real account (signed in by the first session)"
-            for name, fn in (("pdf_first_input_control", lambda *a: case_pdf_first_input(*a, variant="control")),
-                             ("pdf_first_input", case_pdf_first_input), ("pdf_lamalef", case_pdf_lamalef),
-                             ("pptx_lang", case_pptx_lang)):
+            def first_input(variant):
+                return lambda *a: case_pdf_first_input(*a, variant=variant)
+            for name, fn in (("pdf_first_input_control", first_input("control")), ("pdf_first_input", first_input("fixed")),
+                             ("pdf_first_input_async_control", first_input("async_control")),
+                             ("pdf_first_input_async", first_input("async")),
+                             ("pdf_lamalef", case_pdf_lamalef), ("pptx_lang", case_pptx_lang)):
                 try:
                     out[name] = await fn(s, app, evid, out)
                 except Exception as e:
@@ -702,12 +813,43 @@ async def run(exe, app, arch, out_dir, ok):
        "Latin in the embedded font: match %s, still text: %s" % (lm, (ff.get("ref") or {}).get("ap")))
     ok("pdf_ar_field_reopened", (fx.get("reopen_values") or {}).get("client") == AR_CLIENT
        and (fx.get("reopen_values") or {}).get("ref") == LATIN_REF, repr(fx.get("reopen_values")))
-    walls = [k for k, v in out.items() if isinstance(v, dict) and v.get("wall") is not False]
+    # one outline per glyph: every non-space glyph the editor shaped for the Arabic value (lam-alef ligatures included)
+    # is one filled outline in the saved appearance - a glyph left as (unshaped) text or dropped would differ
+    sh = fx.get("shaped") or {}
+    cap = (ff.get("client") or {}).get("ap") or {}
+    letters = len([c for c in AR_CLIENT if not c.isspace()])
+    ok("pdf_ar_field_glyphs_outlined", isinstance(sh.get("nonspace"), int) and sh["nonspace"] > 0
+       and cap.get("glyph_fills") == sh["nonspace"] and cap.get("text_ops") == 0
+       and (sh.get("ligatures", 0) >= 2 or sh["nonspace"] <= letters - 2),
+       "saved appearance: %s outline fills, %s text operators; the editor shaped %s non-space glyphs (%s with 2+ code "
+       "points, from %d letters: lam-alef ligatures formed) %s"
+       % (cap.get("glyph_fills"), cap.get("text_ops"), sh.get("nonspace"), sh.get("ligatures"), letters,
+          sh.get("err") or ""))
+    walls = [k for k, v in out.items() if isinstance(v, dict) and (v.get("wall") is not False or v.get("wall_before_typing")
+             or any(isinstance(x, list) and x[1:2] == ["account card up"] for x in (v.get("steps") or [])))]
     ok("engine_no_account_card", not walls, "account card over: %s (session: %r)" % (walls, out.get("local_session")))
+
+    # the first input of the date field: each fixed round must keep it, each control round (the same editor, the fix
+    # switched off) must still lose it - so 'kept' means 'fixed', not 'no fault to fix this time'
+    def fi_detail(r):
+        return "date %r; %s; checkFieldFont refused: %s" % (
+            r.get("date_first"), json.dumps(r.get("state"), ensure_ascii=False),
+            json.dumps(r.get("field_font_log"), ensure_ascii=False)[:400])
     fi, fc = out.get("pdf_first_input") or {}, out.get("pdf_first_input_control") or {}
-    ok("pdf_first_input_kept", fi.get("date_first") == "24/11/2026",
-       "date after one input of 24/11/2026: %r (retried after the field's fonts: %s); without the Mac fix (control): %r"
-       % (fi.get("date_first"), fi.get("retried"), fc.get("date_first")))
+    fa, fac = out.get("pdf_first_input_async") or {}, out.get("pdf_first_input_async_control") or {}
+    st, sa = fi.get("state") or {}, fa.get("state") or {}
+    ok("pdf_first_input_control_lost", fc.get("date_first") not in (None, DATE) and (fc.get("state") or {}).get("off"),
+       "WITHOUT the Mac fix the fault must still show (one input of %s): %s" % (DATE, fi_detail(fc)))
+    ok("pdf_first_input_kept", fi.get("date_first") == DATE and not st.get("off")
+       and (st.get("font_sync", 0) + st.get("held", 0)) >= 1 and st.get("dropped", 0) == 0,
+       "with the Mac fix (the fix must have acted: font_sync or held >= 1): %s" % fi_detail(fi))
+    ok("pdf_first_input_async_control_lost", fac.get("date_first") not in (None, DATE) and (fac.get("state") or {}).get("off")
+       and (fac.get("state") or {}).get("slow_loads", 0) >= 1,
+       "WITHOUT the Mac fix, font load %d ms late, typed key by key: the fault must still show: %s" % (SLOW_MS, fi_detail(fac)))
+    ok("pdf_first_input_async_order", fa.get("date_first") == DATE and not sa.get("off") and sa.get("slow_loads", 0) >= 1
+       and sa.get("held", 0) >= 2 and sa.get("retried") == sa.get("held") and sa.get("dropped", 0) == 0,
+       "with the Mac fix, font load %d ms late, %d keys %d ms apart: every key held back while the fonts load "
+       "(held >= 2) must arrive, in order: %s" % (SLOW_MS, len(DATE), KEY_GAP_MS, fi_detail(fa)))
     pl = out.get("pptx_lang") or {}
     langs = ((pl.get("state") or {}).get("langs") or [])
     ae = ((pl.get("state") or {}).get("lcid") or {}).get("ae")

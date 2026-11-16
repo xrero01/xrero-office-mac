@@ -168,12 +168,31 @@ which `scripts/ui_test.py` runs in a second app session; build-mac runs 39-42 = 
   outlines (Latin stays text). The Mac builds the saved PDF in the converter from the editor's changes, so the fix is
   in the sdkjs file both load (a shim in the editor page was never called by the save, run 42). Run 43: saved field
   "مؤسسة النموذج التجارية" joined in PyMuPDF and in the copy opened again in the app (ink match 0.91; 0.44-0.60 before).
+  Review round (17 Nov): the test value is now "مؤسسة الإمارات للملاحظات" (two lam-alef ligatures, which take their own
+  path in the fix), and the saved appearance must hold exactly one outline fill per non-space glyph the editor shaped
+  (counted in the editor before Save), since the ink match cannot see one broken ligature. A renamed engine internal now
+  fails the build (`patch_bundle.py` presence anchors) instead of quietly falling back to unshaped text.
+  **Accepted debt - no text layer in that appearance**: Arabic in an embedded-font field is now drawn as outlines, so in
+  that field's saved appearance it cannot be selected, searched or read by accessibility tools; a printed or flattened
+  copy of the form keeps only the outlines. Form readers still have the value (`/V`, unchanged: copy and search of the
+  field value work, and the app reopens it as text). Wrapping the outlines in `/Span <</ActualText (...)>> BDC ... EMC`
+  is not possible from sdkjs: its renderer command stream (`CDocumentRenderer`, `AscCommon.CommandType`) has no
+  marked-content command; the native writer adds ActualText only on its own text path (`PdfWriter` `States.cpp`, PUA
+  text), which is the path that writes the unshaped glyphs. Latin and digits in such fields stay text.
 - **The first input typed into a PDF form field in a new script was lost** (`XR-FIELD-FIRST-INPUT`, editor shim): the
   editor's text entry asks for the active field, which first checks that the field's fonts are in the document's loaded
-  list; the font picked for a new script (the date's digits after Arabic) was not, so the field answered "none" and the
-  text was dropped. The text entry now waits for those fonts. Run 43: the date keeps its first input (the same editor
-  with the fix switched off still loses it); the store capture no longer types the start again (it now fails if it has
-  to).
+  list (`CPDFDoc.checkFieldFont`); the font picked for a new script (the date's digits after Arabic) was not, so the field
+  answered "none" and the text was dropped. Run 43 showed the cause exactly: the font files were already there, the
+  loader called back inside the call and listed them, and the call still answered "not ready". Review round (17 Nov),
+  two layers: (1) `checkFieldFont` answers "ready" when its fonts load inside the call (for every caller: typing, IME
+  composition, autocorrect, the caret); (2) when the font files are really still loading, typed input is held in one
+  ordered queue (every later key joins it while it is not empty) and entered in order into the same field once they are
+  loaded, or dropped if another field is being edited by then. The first version entered a held key from the callback
+  and could put it after a later key ("24" -> "42"); that path was never run by a test (run 43: 0 retries). The engine
+  checks now run four rounds: the date as one piece with the fix off (must still lose it) and on (kept, and the fix must
+  have acted), and the same with the font load made 500 ms late and the date typed key by key 30 ms apart (off: must
+  lose input; on: every key held back, all entered, in order). The store capture also fails if it has to type a field
+  again.
 - **Presentation status bar language** (`XR-PPTX-BIDI-LANG`, a change of the DrawingML reader in sdkjs): Arabic slide
   text written as `lang="ar-AE"` was reported as Saudi Arabia - the reader put a run's language into the left-to-right
   slot only, and right-to-left text is reported from the other slot (default ar-SA). A right-to-left language is now
@@ -187,7 +206,10 @@ Not fixed (engine behaviour; the capture works around it or avoids it):
   with the run-27 form (`test/inputs/ar_form_bold_heading.pdf`, 12.5 pt, at device scale 2); the same bold line at 22 pt
   is drawn right, and the Windows converter (x2t) and the WebAssembly page renderer of the iOS app draw the 12.5 pt
   heading right - so it is the Mac app's native page renderer, size-dependent (TrueType hinting of the subset glyph is
-  suspected, not proven). Not reachable from the web layer. The demo form avoids bold words with lam-alef ("تفاصيل
+  suspected, not proven). Not reachable from the web layer. The engine checks keep it as a record only (no check): each
+  line and heading is scrolled into view before it is captured (runs 42 and 43 captured the second heading out of view,
+  an empty box scored 0.0), and the ink match beside each capture cannot see one broken ligature (0.979 on the visibly
+  broken heading), so the app and MuPDF PNGs (`engine-<arch>/bold-heading-*`, `lamalef-*`) are the evidence. The demo form avoids bold words with lam-alef ("تفاصيل
   إضافية", "خاص بالمكتب"); `store_demo.py` asserts it.
 - **Arabic text in PDF form fields**: the demo's fields use Helvetica (no Arabic), so the app types Arabic in a
   fallback face; it is set to 14 pt in the Arabic form (11 pt in the English one) so it reads at the size of the

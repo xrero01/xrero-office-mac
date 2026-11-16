@@ -599,34 +599,74 @@ MAC_JS = r"""
   // build-mac run 39) shows the text reaching the PDF editor's text entry (asc_enterText) and being refused: the entry
   // asks for the active field (CPDFDoc.getTextController), which first checks that the field's fonts are in the
   // document's loaded list (checkFieldFont) - the font chosen for the new script is not yet, so it starts loading it and
-  // answers "no field", and the text is dropped (the next input finds the font listed and works). The text entry now
-  // asks for the field's fonts itself, with a callback: if they are ready (or become ready at once) the text goes in
-  // now, otherwise it goes in when they are loaded, into the same field. Nothing changes once the fonts are listed.
-  // (window.__xrNoFirstInputFix = the original path, for the engine checks' control round)
+  // answers "no field", and the text is dropped (the next input finds the font listed and works).
+  // Two layers (17 Nov 2026 review):
+  //  1. checkFieldFont itself: when the fonts it starts loading are already there, the font loader calls back BEFORE
+  //     checkFieldFont returns (fontLoader.LoadFonts checks at once) - the fonts are then listed, yet the caller is told
+  //     "not ready". That is the case of the date field (run 43's input log: the callback ran inside the call). Such a
+  //     call now answers "ready" and does not call the caller's callback; a load that is really pending keeps the
+  //     contract (false now, the callback later). This fixes every caller of getTextController at once: text entry,
+  //     IME composition, autocorrect, the caret update.
+  //  2. a load that is really pending (font files read asynchronously): the text entry holds the input back in ONE
+  //     ordered queue - while it is not empty every later typed input joins it - and enters the queue in order, into the
+  //     same field, when the fonts are loaded; if the field is no longer the one being edited the queue is dropped (the
+  //     old behaviour: lost, never typed elsewhere). Paste is not queued (it loads its fonts itself before it enters).
+  // (window.__xrNoFirstInputFix = both off, the original path, for the engine checks' control rounds)
   (function fieldFirstInput(){
     var n = 0, t = setInterval(function () {
-      var A = window.Asc && window.Asc.editor, P = window.AscPDF;
-      if (A && A.asc_enterText && A.getPDFDoc && P && P.CPDFDoc && P.CPDFDoc.prototype.checkFieldFont) {
+      var A = window.Asc && window.Asc.editor, P = window.AscPDF, D = P && P.CPDFDoc && P.CPDFDoc.prototype;
+      if (A && A.asc_enterText && A.getPDFDoc && D && D.checkFieldFont) {
         clearInterval(t);
-        if (A.asc_enterText.__xr) return;
-        var orig = A.asc_enterText;
-        A.asc_enterText = function (codePoints, isFromPaste) {
-          var api = this, args = arguments, doc = null, f = null;
-          try { doc = api.getPDFDoc(); f = doc && doc.activeForm; } catch (e) {}
-          if (!isFromPaste && !window.__xrNoFirstInputFix && f && f.IsInForm && f.IsInForm() && f.IsCanEditText &&
-              f.IsCanEditText() && doc.checkFieldFont) {
-            var during = true, done = false, ready = true;
+        var off = function () { return !!window.__xrNoFirstInputFix; };
+        var bump = function (k, by) { window[k] = (window[k] || 0) + (by === undefined ? 1 : by); };
+        if (!D.checkFieldFont.__xr) {
+          var cff = D.checkFieldFont;
+          D.checkFieldFont = function (oField, callback) {
+            if (off()) return cff.apply(this, arguments);
+            var running = true, sync = false, r;
             try {
-              ready = doc.checkFieldFont(f, function () {
-                done = true;
-                if (!during && doc.activeForm === f && f.IsInForm()) {
-                  window.__xrFirstInputRetried = (window.__xrFirstInputRetried || 0) + 1;
-                  orig.apply(api, args);
-                }
+              r = cff.call(this, oField, function () {
+                if (running) { sync = true; return; }          // loaded inside the call: answered "ready" below
+                if (typeof callback === 'function') return callback.apply(this, arguments);
               });
-            } catch (e) { ready = true; }
-            during = false;
-            if (!ready && !done) return true;      // entered by the callback once the field's fonts are loaded
+            } finally { running = false; }
+            if (!r && sync) { bump('__xrFieldFontSync'); return true; }
+            return r;
+          };
+          D.checkFieldFont.__xr = true;
+        }
+        if (A.asc_enterText.__xr) return;
+        var orig = A.asc_enterText, q = [];
+        var drop = function () { if (q.length) { bump('__xrFirstInputDropped', q.length); q.length = 0; } };
+        var flush = function () {
+          while (q.length) {
+            var it = q[0];
+            if (it.doc.activeForm !== it.f || !(it.f.IsInForm && it.f.IsInForm())) { drop(); return; }
+            var ready = true;
+            try { ready = it.doc.checkFieldFont(it.f, flush); } catch (e) { ready = true; }
+            if (!ready) return;                                // more to load: flush runs again when it is loaded
+            q.shift();
+            bump('__xrFirstInputRetried');
+            try { orig.apply(it.api, it.args); } catch (e) {}
+          }
+        };
+        A.asc_enterText = function (codePoints, isFromPaste) {
+          if (isFromPaste || off()) return orig.apply(this, arguments);
+          var doc = null, f = null;
+          try { doc = this.getPDFDoc(); f = doc && doc.activeForm; } catch (e) {}
+          var item = {api: this, args: [codePoints && codePoints.slice ? codePoints.slice() : codePoints, isFromPaste],
+                      doc: doc, f: f, t: Date.now()};
+          if (q.length) {
+            // an earlier input still waits for this field's fonts: this one goes after it (4 s at most, then the old path)
+            if (f && f === q[0].f && f.IsInForm && f.IsInForm() && item.t - q[0].t < 4000) {
+              q.push(item); bump('__xrFirstInputHeld'); return true;
+            }
+            drop();
+          }
+          if (doc && f && f.IsInForm && f.IsInForm() && f.IsCanEditText && f.IsCanEditText()) {
+            var ready = true;
+            try { ready = doc.checkFieldFont(f, flush); } catch (e) { ready = true; }
+            if (!ready) { q.push(item); bump('__xrFirstInputHeld'); return true; }
           }
           return orig.apply(this, arguments);
         };
@@ -665,14 +705,28 @@ if n_ini != 4:
 if n_present != 1:
     raise SystemExit("Present button Arabic label: not found in the presentation editor's app.js")
 log("Present button: Arabic label 'بدء العرض'")
-# the engine functions the shims above wrap at run time (MAC_JS: pdfKeyTick, XR-FIELD-FIRST-INPUT) and the sdkjs patches below change must be in this payload's
-# sdkjs under these names - a payload whose engine renamed them would leave a shim silently idle
+# the engine functions the shims above wrap at run time (MAC_JS: pdfKeyTick, XR-FIELD-FIRST-INPUT) and the sdkjs patches
+# below change or call must be in this payload's sdkjs under these names - a payload whose engine renamed them would leave
+# a shim silently idle (XR-FIELD-AP: or quietly back on the old unshaped text), so a renamed engine fails the build here
 SDK_WORD = open(os.path.join(E, "sdkjs", "word", "sdk-all.js"), encoding="utf-8", errors="surrogateescape").read()
 for need in ("CBaseField.prototype.WriteRenderToBinary = function(memory)", "CDocumentRenderer.prototype.tg = function(gid, x, y, codePoints)",
              "LoadStringPathCode : function(code, isGid, fX, fY, worker)", "window['AscFonts'].getEmbeddedFontPrefix = function()",
+             # XR-FIELD-AP's private internals (the renderer's current font, the measurer's font set-up, the glyph outline)
+             "return this.m_arrayPages[this.m_lPagesCount - 1].m_oFont;",
+             "SetFontInternal : function(_name, _size, _style, _dpi)",
+             "this.m_pFont.GetStringPath(string, worker);",
+             "this.GetGIDByUnicode = function(glyph)",
+             "this.GetFirstGlyph = function()",
+             "this.m_oGlyphString = new AscFonts.CGlyphString();",
+             "this.m_oLastFont = new AscCommon.CFontSetup();",
+             "extendFonts : function(fonts, isNoRealExtend)",
              "CPDFDoc.prototype.EnterDownActiveField = function()",
+             # XR-FIELD-FIRST-INPUT: checkFieldFont (wrapped), its caller, and the loader that calls back inside the call
              "CPDFDoc.prototype.checkFieldFont = function(oField, callback)",
-             "if (activeForm && this.checkFieldFont(activeForm) && activeForm.IsCanEditText())"):
+             "CPDFDoc.prototype.getTextController = function()",
+             "if (activeForm && this.checkFieldFont(activeForm) && activeForm.IsCanEditText())",
+             "this.LoadFonts = function(fonts, callback)",
+             "this.fontLoader             = AscCommon.g_font_loader;"):
     if need not in SDK_WORD:
         raise SystemExit("engine shim target missing in the payload's sdkjs: " + need)
 SDK_WORD_MIN = open(os.path.join(E, "sdkjs", "word", "sdk-all-min.js"), encoding="utf-8", errors="surrogateescape").read()
@@ -780,7 +834,7 @@ PPTX_LANG_OLD = ("var nLcid = Asc.g_oLcidNameToIdMap[lang];\n"
 PPTX_LANG_NEW = ("var nLcid = Asc.g_oLcidNameToIdMap[lang];\n"
                  "                        if(nLcid)\n"
                  "                            rPr.Lang.Val = nLcid;\n"
-                 "                        /*XR-PPTX-BIDI-LANG*/ if(nLcid && /^(ar|he|iw|fa|ur|ps|sd|ug|yi|dv|syr|ckb|ku-Arab)(-|$)/i.test(lang))\n"
+                 "                        /*XR-PPTX-BIDI-LANG*/ if(nLcid && /^(ar|he|iw|fa|ur|ps|ug|yi|dv|syr|ckb)(-|$)|^(sd|ku|pa|ks|az|uz)-Arab(-|$)/i.test(lang))\n"
                  "                            rPr.Lang.Bidi = nLcid;")
 n_lang = 0
 for b in ("word", "slide", "cell", "visio"):
@@ -788,7 +842,8 @@ for b in ("word", "slide", "cell", "visio"):
     if not os.path.exists(f):
         continue
     t = open(f, encoding="utf-8", errors="surrogateescape", newline="").read()       # (line ends kept as they are)
-    if "/*XR-PPTX-BIDI-LANG*/" in t:
+    if "/*XR-PPTX-BIDI-LANG*/" in t:          # (already patched: counted as done, so a second run stays green)
+        n_lang += 1
         continue
     nl = "\r\n" if PPTX_LANG_OLD.replace("\n", "\r\n") in t else "\n"
     k = t.count(PPTX_LANG_OLD.replace("\n", nl))

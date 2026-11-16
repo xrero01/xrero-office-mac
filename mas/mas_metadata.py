@@ -63,7 +63,9 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
         "promotionalText": "مجاني ومصمم للعربية أولاً: المستندات والجداول والعروض وPDF في تطبيق واحد. افتح ملفات أوفيس وعدّلها واحفظها على الماك.",
     },
 }
-SHOTS = {"en-US": ["mac_en_start.png", "mac_en_editor.png"], "ar-SA": ["mac_ar_start.png", "mac_ar_editor.png"]}
+# the listing's order: start page, Arabic document, spreadsheet + chart, presentation, PDF form + annotations
+SHOTS = {"en-US": ["mac_en_start.png", "mac_en_editor.png", "mac_en_sheet.png", "mac_en_slides.png", "mac_en_pdf.png"],
+         "ar-SA": ["mac_ar_start.png", "mac_ar_editor.png", "mac_ar_sheet.png", "mac_ar_slides.png", "mac_ar_pdf.png"]}
 
 NOTES = """XRERO OFFICE FOR MAC - APP REVIEW INFORMATION
 

@@ -11,8 +11,14 @@ shots: the app in the chosen interface language (the app's own setting, asc_user
        spreadsheet, a presentation, a PDF) so the start page lists them under Recent files, as a user's would; then
        the app starts again and the start page is photographed, then the neutral demo document (mas/store_demo.docx,
        mas/store_demo_ar.docx for ar) opened from Finder as "Q3 report.docx" (en) / "التقرير الربعي.docx" (ar), the
-       caret in its Arabic summary (the status bar and the ribbon show the Arabic paragraph). Each picture is written
-       twice:
+       caret in its Arabic summary (the status bar and the ribbon show the Arabic paragraph), then (16 Nov 2026, the
+       five-picture set) the other three demo files in the same window, each in its own tab:
+         sheet  store_demo_sheet[_ar].xlsx - E5 selected (=SUM(B5:D5) in the formula bar), the column chart beside it
+         slide  store_demo_slides[_ar].pptx - a real click into slide 1's title, End: the caret after the title text
+         pdf    store_demo_form[_ar].pdf - the Comment tab, then the form filled in the app the way a user does it:
+                Tab to each field, type, Enter on the check boxes to tick (the file already carries the reviewer's
+                highlight, ink circle and sticky note); the caret is left in the Notes field
+       Each picture is written twice:
          <lang>-<name>-window.png  the window as the screen shows it (screencapture, 1x on the CI display)
          <lang>-<name>-page2x.png  the same page drawn by the app at Retina scale (DevTools, device scale 2)
 audit: first run in a fresh container: what a user sees in the first seconds and on the first open of each editor
@@ -29,14 +35,25 @@ EXE = os.path.join(APP, "Contents", "MacOS", plistlib.load(open(os.path.join(APP
 BID = "com.xrero.office"
 PORT = 9333
 CODE = {"en": "en-US", "ar": "ar-SA"}[LANG]
-DOC_NAME = {"en": "Q3 report.docx", "ar": "التقرير الربعي.docx"}[LANG]    # (en: short enough for the whole tab title)
-# the Recent files of the start picture: (name, source in the repo or None = a PDF made here), opened oldest first
 HERE = os.path.dirname(os.path.abspath(__file__))
-INPUTS = os.path.join(HERE, "..", "test", "inputs")
-RECENTS = {"en": [("Welcome guide.pdf", None), ("Q3 review.pptx", "slides_ar.pptx"),
-                  ("Projects by office.xlsx", "sheet_ar.xlsx"), (DOC_NAME, "DEMO")],
-           "ar": [("دليل الترحيب.pdf", None), ("عرض الربع الثالث.pptx", "slides_ar.pptx"),
-                  ("المشاريع حسب المكتب.xlsx", "sheet_ar.xlsx"), (DOC_NAME, "DEMO")]}[LANG]
+# the names the pictures show (tab titles, Recent files); short enough for whole tab titles
+NAMES = {"en": dict(editor="Q3 report.docx", sheet="Projects 2026.xlsx", slide="Q3 review.pptx", pdf="Room request.pdf"),
+         "ar": dict(editor="التقرير الربعي.docx", sheet="المشاريع 2026.xlsx", slide="عرض الربع الثالث.pptx",
+                    pdf="طلب حجز قاعة.pdf")}[LANG]
+DOC_NAME = NAMES["editor"]
+SUF = "_ar" if LANG == "ar" else ""
+DEMO = {"sheet": os.path.join(HERE, "store_demo_sheet%s.xlsx" % SUF), "slide": os.path.join(HERE, "store_demo_slides%s.pptx" % SUF),
+        "pdf": os.path.join(HERE, "store_demo_form%s.pdf" % SUF)}
+FONT = "Geeza Pro" if LANG == "ar" else "Helvetica Neue"      # the demo files' face (store_demo.py)
+# the Recent files of the start picture: the four demo files of the pictures, opened oldest first
+RECENTS = [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES["sheet"], DEMO["sheet"]), (DOC_NAME, "DEMO")]
+# the PDF form as the capture fills it in (store_demo.py PDF_FIELDS order = the form's tab order); True = tick (Enter)
+PDF_FILL = {"en": [("department", "Projects"), ("office", "Sharjah"), ("date", "24 Nov 2026"), ("attendees", "12"),
+                   ("display", True), ("video", True), ("refreshments", False),
+                   ("notes", "Q3 results review with the office teams")],
+            "ar": [("department", "المشاريع"), ("office", "الشارقة"), ("date", "24/11/2026"), ("attendees", "12"),
+                   ("display", True), ("video", True), ("refreshments", False),
+                   ("notes", "مراجعة نتائج الربع الثالث مع فرق المكاتب")]}[LANG]
 PROC = 'tell application "System Events" to tell (first process whose bundle identifier is "%s")' % BID
 os.makedirs(OUT, exist_ok=True)
 res = {"mode": MODE, "lang": CODE, "shots": [], "log": []}
@@ -111,6 +128,17 @@ class Page:
     async def ev(self, expr):
         r = await self.call("Runtime.evaluate", {"expression": expr, "returnByValue": True, "awaitPromise": True})
         return r.get("result", {}).get("result", {}).get("value")
+
+    async def click(self, x, y):
+        """a real left click (the browser's own input path, as a mouse would)"""
+        await self.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        for t in ("mousePressed", "mouseReleased"):
+            await self.call("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
+
+    async def key(self, code, name):
+        for t in ("rawKeyDown", "keyUp"):
+            await self.call("Input.dispatchKeyEvent", {"type": t, "windowsVirtualKeyCode": code, "nativeVirtualKeyCode": code,
+                                                       "code": name, "key": name})
 
 
 TIPS_JS = """(function(){var f=document.querySelector('iframe[name=frameEditor]');var docs=[document];
@@ -267,6 +295,137 @@ def titlebar():
         return ["unreadable: %s" % e]
 
 
+# ---- the spreadsheet / presentation / PDF pictures (16 Nov 2026) --------------------------------------------------
+# every snippet runs in the editor tab's page; the editor itself is in its frameEditor frame (w, d, api); fr = the
+# frame's place in the page (CDP input events take page coordinates)
+FRAME = r"""var f=document.querySelector('iframe[name=frameEditor]');var w=f&&f.contentWindow||window,d=w.document;
+  var fr=f?f.getBoundingClientRect():{left:0,top:0};var api=(w.Asc&&w.Asc.editor)||w.editor;
+  function fontbox(){var e=d.querySelector('#slot-field-fontname input');return e?e.value:'';}
+  function statusbar(){var s=d.getElementById('statusbar');return s?(s.innerText||'').replace(/\s+/g,' ').trim().slice(0,200):'';}"""
+
+READY_JS = r"""(function(tag){""" + FRAME + r"""
+  if(!api)return 'no editor api';
+  if([].slice.call(d.querySelectorAll('.asc-loadmask')).some(function(e){return e.offsetParent!==null;}))return 'loading';
+  try{if(tag==='sheet')return api.wbModel&&api.wb?'ok':'no workbook';
+    if(tag==='slide')return api.WordControl.m_oLogicDocument.Slides.length?'ok':'no slides';
+    if(tag==='pdf')return api.getPDFDoc().widgets.length?'ok':'no form fields';
+    return api.WordControl.m_oLogicDocument?'ok':'no document';}catch(e){return 'error: '+e;}})(__TAG__)"""
+
+SHEET_SELECT_JS = r"""(function(){""" + FRAME + r"""try{api.asc_findCell('E5');return 'ok';}catch(e){return 'error: '+e;}})()"""
+SHEET_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
+  try{var ws=api.wbModel.getActiveWs(),CH=w.AscDFH.historyitem_type_ChartSpace;
+    var t=(ws.Drawings||[]).map(function(x){var g=x.graphicObject;return g&&g.getObjectType?g.getObjectType():-1;});
+    o.charts=t.filter(function(v){return v===CH;}).length;o.drawings=t.length;o.sheet=ws.getName();
+    try{o.rtl=!!ws.getRightToLeft();}catch(e){o.rtl='unknown: '+e;}}catch(e){o.err=''+e;}
+  o.cell=(d.getElementById('ce-cell-name')||{}).value||'';o.formula=(d.getElementById('ce-cell-content')||{}).value||'';
+  o.font=fontbox();o.statusbar=statusbar();return o;})()"""
+
+# slide 1's title: its middle line, near the side the text starts from (the click lands on the title's text)
+SLIDE_POINT_JS = r"""(function(rtl){""" + FRAME + r"""var o={};
+  try{var wc=api.WordControl,p=wc.m_oLogicDocument;if(p.CurPage!==0&&wc.GoToPage)wc.GoToPage(0);
+    var sp=null;p.Slides[0].cSld.spTree.forEach(function(s){if(!sp&&s.isPlaceholder&&s.isPlaceholder()&&
+      [w.AscFormat.phType_ctrTitle,w.AscFormat.phType_title].indexOf(s.getPlaceholderType())>=0)sp=s;});
+    if(!sp)return {err:'no title placeholder'};
+    var xm=sp.x+sp.extX*(rtl?0.95:0.05),ym=sp.y+sp.extY*0.78,dd=wc.m_oDrawingDocument;
+    var a=dd.ConvertCoordsToCursor3(xm,ym,false),g=dd.ConvertCoordsToCursor3(xm,ym,true);
+    var v=d.getElementById('id_viewer').getBoundingClientRect();
+    o={shape_mm:[sp.x,sp.y,sp.extX,sp.extY].map(Math.round),x:fr.left+v.left+a.X,y:fr.top+v.top+a.Y,gx:fr.left+g.X,gy:fr.top+g.Y};
+  }catch(e){o.err=''+e;}return o;})(__RTL__)"""
+SLIDE_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
+  try{var p=api.WordControl.m_oLogicDocument;o.slide=p.CurPage;o.slides=p.Slides.length;
+    var c=p.GetCurrentController&&p.GetCurrentController(),tc=c&&c.getTargetDocContent&&c.getTargetDocContent();
+    o.in_text=!!tc;if(tc){var cp=tc.GetCurrentParagraph&&tc.GetCurrentParagraph();o.paragraph=cp&&cp.GetText?cp.GetText().slice(0,60):'';}
+  }catch(e){o.err=''+e;}o.font=fontbox();o.statusbar=statusbar();return o;})()"""
+
+# the Comment tab (annotation tools) and a blank spot of the page's margin (gives the page the keyboard)
+PDF_PREP_JS = r"""(function(){""" + FRAME + r"""var o={};
+  var tab=d.querySelector('.ribtab a[data-tab=comment]');
+  if(tab){var r=tab.getBoundingClientRect();o.tab=[fr.left+r.left+r.width/2,fr.top+r.top+r.height/2];}
+  try{var v=api.getDocumentRenderer(),det=v.getPageLikeDetector(0),rp=w.AscCommon.AscBrowser.retinaPixelRatio||1;
+    var cv=v.canvas.getBoundingClientRect(),W=v.file.pages[0].W,pl=cv.left+det.x/rp,pt=cv.top+det.y/rp,sc=(det.w/rp)/W;
+    o.page=[pl,pt,det.w/rp,det.h/rp].map(Math.round);o.px_per_pt=sc;o.focus=[fr.left+pl+24*sc,fr.top+pt+118*sc];
+  }catch(e){o.err=''+e;}return o;})()"""
+PDF_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
+  try{var doc=api.getPDFDoc();
+    o.fields=doc.widgets.map(function(x){return [x.GetFullName(),x.IsChecked?x.IsChecked():x.GetValue()];});
+    o.active=doc.activeForm?doc.activeForm.GetFullName():'';o.annots=doc.annots.map(function(a){return a.GetType();});
+  }catch(e){o.err=''+e;}
+  var t=d.querySelector('.ribtab.active a');o.tab=t?t.getAttribute('data-tab'):'';o.statusbar=statusbar();return o;})()"""
+
+# the visible interface text of the editor tab (its page + editor frame): Latin words (the Arabic pictures should have
+# none that a capture choice can avoid) and the whole text (private-data check); input fields' values too
+UI_JS = r"""(function(){""" + FRAME + r"""
+  function vis(e){var vw=e.ownerDocument.defaultView,s=vw.getComputedStyle(e),r=e.getBoundingClientRect();
+    return s&&s.display!=='none'&&s.visibility!=='hidden'&&+s.opacity!==0&&r.width>0&&r.height>0&&r.right>0&&r.bottom>0&&
+      r.left<vw.innerWidth&&r.top<vw.innerHeight;}
+  var latin=[],all=[];
+  [document,d].forEach(function(doc){if(!doc||!doc.body)return;var tw=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT),n;
+    while((n=tw.nextNode())){var t=n.nodeValue.replace(/\s+/g,' ').trim(),e=n.parentElement;
+      if(!t||!e||e.closest('script,style,svg,noscript')||!vis(e))continue;
+      all.push(t);if(/[A-Za-z]{2,}/.test(t))latin.push(t.slice(0,60));}});
+  var inputs=[].slice.call(d.querySelectorAll('input,textarea')).filter(vis).map(function(i){return i.value;}).filter(String);
+  return {latin:latin,inputs:inputs,text:all.join(' | ').slice(0,6000)};})()"""
+
+
+async def frame_ready(pg, tag):
+    st = None
+    for _ in range(45):
+        st = await pg.ev(READY_JS.replace("__TAG__", json.dumps(tag)))
+        if st == "ok":
+            break
+        await asyncio.sleep(1)
+    return st
+
+
+async def prep_sheet(pg):
+    sel = await pg.ev(SHEET_SELECT_JS)
+    await asyncio.sleep(2)
+    o = await pg.ev(SHEET_STATE_JS) or {}
+    o["select"] = sel
+    return o
+
+
+async def prep_slide(pg):
+    pt = await pg.ev(SLIDE_POINT_JS.replace("__RTL__", "true" if LANG == "ar" else "false")) or {}
+    if "x" in pt:
+        await pg.click(pt["x"], pt["y"])
+        await asyncio.sleep(1.5)
+        await pg.key(35, "End")                 # the caret after the title's last letter
+        await asyncio.sleep(1.5)
+    o = await pg.ev(SLIDE_STATE_JS) or {}
+    o["point"] = pt
+    return o
+
+
+async def prep_pdf(pg):
+    pre = await pg.ev(PDF_PREP_JS) or {}
+    if pre.get("tab"):
+        await pg.click(*pre["tab"])
+        await asyncio.sleep(2)
+    if pre.get("focus"):
+        await pg.click(*pre["focus"])
+        await asyncio.sleep(1.5)
+    steps = []
+    for name, v in PDF_FILL:                    # the form's tab order (store_demo.py PDF_FIELDS)
+        await pg.key(9, "Tab")
+        await asyncio.sleep(1.6)
+        if v is True:
+            await pg.key(13, "Enter")
+            await asyncio.sleep(1)
+        elif v:
+            await pg.call("Input.insertText", {"text": v})
+            await asyncio.sleep(1)
+        st = await pg.ev("(function(){" + FRAME + "try{var a=api.getPDFDoc().activeForm;return a?a.GetFullName():'';}catch(e){return ''+e;}})()")
+        steps.append([name, st])
+    await asyncio.sleep(1.5)
+    o = await pg.ev(PDF_STATE_JS) or {}
+    o["prep"], o["steps"] = pre, steps
+    return o
+
+
+PREP = {"sheet": prep_sheet, "slide": prep_slide, "pdf": prep_pdf}
+
+
 async def main():
     ensure_quit()
     if MODE in ("shots", "switch"):
@@ -332,7 +491,7 @@ async def main():
             res["recents_done"] = True
             opened = []
             for name, src in RECENTS:
-                dst = make_doc(name, SRC if src == "DEMO" else (os.path.join(INPUTS, src) if src else None))
+                dst = make_doc(name, SRC if src == "DEMO" else src)
                 if not dst:
                     continue
                 old = {t["id"] for t in await targets()}
@@ -381,7 +540,8 @@ async def main():
         if MODE == "switch":
             docs = []
         elif MODE == "shots":
-            docs = [(DOC_NAME, SRC, "editor")]
+            docs = [(DOC_NAME, SRC, "editor"), (NAMES["sheet"], DEMO["sheet"], "sheet"), (NAMES["slide"], DEMO["slide"], "slide"),
+                    (NAMES["pdf"], DEMO["pdf"], "pdf")]
         else:
             docs = [("Q3 report.docx", os.path.join(HERE, "store_demo.docx"), "word"),
                     ("sheet.xlsx", os.path.join(SRC, "sheet_ar.xlsx"), "cell"),
@@ -410,6 +570,13 @@ async def main():
                 log(tag, "tips/dialogs:", json.dumps(state, ensure_ascii=False))
                 res.setdefault("editors", {})[tag] = state
                 if MODE == "shots":
+                    res.setdefault("ready", {})[tag] = await frame_ready(pg, tag)
+                    log(tag, "ready:", res["ready"][tag])
+                if MODE == "shots" and tag != "editor":
+                    info = await PREP[tag](pg)
+                    res[tag + "_info"] = info
+                    log(tag + ":", json.dumps(info, ensure_ascii=False))
+                elif MODE == "shots":
                     info = await pg.ev("""(function(){var f=document.querySelector('iframe[name=frameEditor]');var w=f&&f.contentWindow||window;
                       // the caret in the Arabic summary (the headline is about Arabic: the status bar's language and the
                       // ribbon's paragraph state then show the Arabic paragraph, not an English line)
@@ -430,10 +597,16 @@ async def main():
                         tabs:[].slice.call(w.document.querySelectorAll('#toolbar .ribtab a')).map(function(a){return a.innerText.trim();}).filter(String).slice(0,12)};})()""")
                     res["editor_info"] = info
                     log("editor:", json.dumps(info, ensure_ascii=False))
+                if MODE == "shots":
                     # the page's pointer rests on an empty stretch of the status bar (no table handle, no tooltip)
                     vw = await pg.ev("[innerWidth, innerHeight]") or [1000, 700]
                     await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": vw[0] * (0.36 if LANG == "en" else 0.64), "y": vw[1] - 11})
                     await asyncio.sleep(2)
+                    # what the picture holds: tips / dialogs, English words left in the Arabic UI, private data
+                    res.setdefault("editors_final", {})[tag] = await pg.ev(TIPS_JS)
+                    res.setdefault("ui", {})[tag] = await pg.ev(UI_JS)
+                    log(tag, "final:", json.dumps(res["editors_final"][tag], ensure_ascii=False),
+                        "latin:", json.dumps((res["ui"][tag] or {}).get("latin"), ensure_ascii=False))
                     screen_shot(tag, place_window()[:4])
                     res["titlebar_" + tag] = titlebar()
                     log("title bar (%s):" % tag, json.dumps(res["titlebar_" + tag], ensure_ascii=False)[:1500])
@@ -470,6 +643,46 @@ if MODE == "shots":
         bad.append("recent files on the start picture (4, kit pictures): %s" % sp.get("recents"))
     if not str((res.get("editor_info") or {}).get("caret", "")).startswith("summary"):
         bad.append("caret not in the Arabic summary: %s" % (res.get("editor_info") or {}).get("caret"))
+    # the five-picture set (16 Nov 2026): every editor picture taken, ready, no tips / dialogs, nothing private
+    taken = {x.get("name") for x in res.get("shots", []) if x.get("page2x")}
+    for tag in ("start", "editor", "sheet", "slide", "pdf"):
+        if tag not in taken:
+            bad.append("no %s picture" % tag)
+    for tag, st in (res.get("ready") or {}).items():
+        if st != "ok":
+            bad.append("%s editor not ready: %s" % (tag, st))
+    for tag, v in (res.get("editors_final") or {}).items():
+        if not v or v.get("tips") or v.get("dialogs"):
+            bad.append("%s picture: tips / dialogs %s" % (tag, v))
+    import re
+    who = [x for x in {os.environ.get("USER", ""), os.environ.get("LOGNAME", ""), os.path.basename(os.path.expanduser("~"))} if len(x) > 2]
+    priv = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+" + "".join(r"|\b%s\b" % re.escape(x) for x in who), re.I)
+    # Latin words an Arabic picture may keep: the product name, the account chip's initials, PDF, file extensions
+    latin_ok = re.compile(r"^(Xrero( Office)?|XO|PDF|.*\.(docx|xlsx|pptx|pdf))$")
+    for tag, u in (res.get("ui") or {}).items():
+        u = u or {}
+        hits = priv.findall(" | ".join([u.get("text", "")] + (u.get("inputs") or [])))
+        if hits:
+            bad.append("%s picture: private data on screen %s" % (tag, hits[:5]))
+        if LANG == "ar":
+            left = [t for t in u.get("latin") or [] if not latin_ok.match(t)]
+            if left:
+                bad.append("%s picture: English in the Arabic interface %s" % (tag, left[:12]))
+    for k, v in res.items():
+        if k.startswith("titlebar_") and priv.findall(json.dumps(v, ensure_ascii=False)):
+            bad.append("%s: private data %s" % (k, priv.findall(json.dumps(v, ensure_ascii=False))[:5]))
+    si = res.get("sheet_info") or {}
+    if (si.get("cell") != "E5" or not str(si.get("formula", "")).upper().startswith("=SUM(") or (si.get("charts") or 0) < 1
+            or si.get("font") != FONT or si.get("rtl") is not (LANG == "ar")):
+        bad.append("spreadsheet picture (E5 =SUM, a chart, %s, rtl=%s): %s" % (FONT, LANG == "ar", si))
+    sl = res.get("slide_info") or {}
+    if not sl.get("in_text") or sl.get("slide") != 0 or sl.get("slides") != 4 or sl.get("font") != FONT:
+        bad.append("presentation picture (caret in slide 1's title, %s): %s" % (FONT, sl))
+    pi = res.get("pdf_info") or {}
+    got = {k: v for k, v in (pi.get("fields") or [])}
+    if (any(got.get(k) != v for k, v in PDF_FILL) or pi.get("active") != "notes" or len(pi.get("annots") or []) < 3
+            or pi.get("tab") != "comment"):
+        bad.append("PDF picture (form filled, caret in notes, 3 annotations, Comment tab): %s" % pi)
 if bad:
     print("FAIL:", bad)
 sys.exit(3 if bad else 0)

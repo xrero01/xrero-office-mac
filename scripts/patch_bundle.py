@@ -158,11 +158,14 @@ if nib_hits == 0:
 # accessibility dump of build-mac run 43772417382): the storyboard puts a download box (downloadBackgroundView: an image
 # view + a button, 32 points wide) at the trailing end of the title bar, past the right edge of the window - left to right
 # it is never on screen. Right to left the title bar is mirrored and the box lands inside the window at its left end:
-# a grey square with a light-blue bar in every Arabic window. Under it (run 43773855657) the cloud account button
-# (userProfileButton, a grey person) sits the same way. Both are archived hidden (NSvFlags hidden bit), so neither is
-# drawn in either direction - as left to right, where they never come on screen; the Mac app has no cloud account or
-# cloud downloads for them to show. A NIBArchive cannot change a value's size in place (the flags grow from 2 to 4
-# bytes), so the storyboard file is written again from its parts.
+# a grey square with a light-blue bar in every Arabic window. The box is archived hidden (NSvFlags hidden bit), so it
+# is not drawn in either direction - as left to right, where it never comes on screen; the Mac app has no cloud
+# downloads for it to show. A NIBArchive cannot change a value's size in place (the flags grow from 2 to 4 bytes), so the
+# storyboard file is written again from its parts.
+# Under the box (run 43773855657) sits the cloud account button (userProfileButton) the same way: a faint grey person at
+# the left end of right-to-left windows. The app shows that button itself (archived hidden it still came back, run
+# 43775991617), so its two storyboard pictures (icon-login_normal / _hover, named only in this storyboard) become
+# transparent ones of the same name length; the Mac app has no cloud account for it.
 def nib_read(b):
     """NIBArchive -> dict: header words, sections (objects/keys/values/classes) as lists, section order"""
     import struct
@@ -272,14 +275,35 @@ for nib in nibs:
     b = open(nib, "rb").read()
     if b"downloadBackgroundView" not in b:
         continue
-    r = nib_hide_outlets(b, ("downloadBackgroundView", "userProfileButton"))
-    if r:
-        open(nib, "wb").write(r[0])
-        hide_hits += r[1]
-        log("title bar download box + account button archived hidden:", os.path.relpath(nib, RES), r[1], "views,",
-            len(b), "->", len(r[0]), "bytes")
-if hide_hits != 2:
-    raise SystemExit("title bar download box + account button: %d of 2 found in the storyboard" % hide_hits)
+    r = nib_hide_outlets(b, ("downloadBackgroundView",))
+    if not r:
+        continue
+    nb = r[0]
+    # (NIBArchive strings: a varint length, 0x80 | n for n < 128, then the bytes)
+    for old, new in ((b"\x91icon-login_normal", b"\x91xr-noaccount-norm"), (b"\x90icon-login_hover", b"\x90xr-noaccount-hov")):
+        if nb.count(old) != 1 or len(old) != len(new):
+            raise SystemExit("title bar account button picture %r: found %d" % (old, nb.count(old)))
+        nb = nb.replace(old, new)
+    open(nib, "wb").write(nb)
+    hide_hits += r[1]
+    log("title bar: download box archived hidden, account button pictures transparent:", os.path.relpath(nib, RES),
+        len(b), "->", len(nb), "bytes")
+if hide_hits != 1:
+    raise SystemExit("title bar download box: %d found in the storyboard" % hide_hits)
+
+
+def blank_png(w, h):
+    """a fully transparent w x h PNG"""
+    import struct, zlib
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    raw = b"".join(b"\0" + b"\0\0\0\0" * w for _ in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+for name in ("xr-noaccount-norm", "xr-noaccount-hov"):
+    open(os.path.join(RES, name + ".png"), "wb").write(blank_png(12, 12))
 
 # ---------------------------------------------------------------- .strings (menus, window titles, messages)
 VALUE = re.compile(r'(=\s*")((?:[^"\\]|\\.)*)(")')

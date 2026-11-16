@@ -247,20 +247,30 @@ def screen_shot(name, box):
     log("shot", name, box)
 
 
-async def page_shot_2x(pg, name):
-    """the page drawn at device scale 2 (Retina), the layout size unchanged"""
+async def page_shot_2x(pg, name, rest=None, caret=False):
+    """the page drawn at device scale 2 (Retina), the layout size unchanged. rest = where the page's pointer rests (sent
+    again just before the capture: run 26's Arabic start picture had the first Recent row in its hover state); caret =
+    the editor's caret held visible for the capture (it blinks every 500 ms: run 26's slide pictures caught it off)"""
     vw = await pg.ev("[innerWidth, innerHeight, devicePixelRatio]") or [0, 0, 1]
     await pg.call("Emulation.setDeviceMetricsOverride", {"width": vw[0], "height": vw[1], "deviceScaleFactor": 2, "mobile": False})
     await asyncio.sleep(4)
+    if rest:
+        await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": rest[0], "y": rest[1]})
+        await asyncio.sleep(0.8)
+    held = await pg.ev(CARET_JS.replace("__HOLD__", "true")) if caret else None
     dpr = await pg.ev("devicePixelRatio")
+    hover = await pg.ev(HOVER_JS)
     r = await pg.call("Page.captureScreenshot", {"format": "png"})
+    if caret:
+        await pg.ev(CARET_JS.replace("__HOLD__", "false"))
     await pg.call("Emulation.clearDeviceMetricsOverride")
     await asyncio.sleep(2)
     if r.get("result", {}).get("data"):
         p = os.path.join(OUT, "%s-%s-page2x.png" % (LANG, name))
         open(p, "wb").write(base64.b64decode(r["result"]["data"]))
-        res["shots"].append({"name": name, "page2x": os.path.basename(p), "viewport": vw[:2], "dpr_then": dpr})
-        log("page 2x", name, vw, "dpr", dpr)
+        res["shots"].append({"name": name, "page2x": os.path.basename(p), "viewport": vw[:2], "dpr_then": dpr,
+                             "caret": held, "hover": hover})
+        log("page 2x", name, vw, "dpr", dpr, "caret", held, "hover", hover)
 
 
 def make_doc(name, src):
@@ -375,6 +385,37 @@ UI_JS = r"""(function(){""" + FRAME + r"""
       all.push(t);if(/[A-Za-z]{2,}/.test(t))latin.push(t.slice(0,60));}});
   var inputs=[].slice.call(d.querySelectorAll('input,textarea')).filter(vis).map(function(i){return i.value;}).filter(String);
   return {latin:latin,inputs:inputs,text:all.join(' | ').slice(0,6000)};})()"""
+
+
+# the caret: its blink timer paused and the caret shown for a capture (hold), then the timer started again (release);
+# only where the editor wants a caret (NeedTarget) - the caret the picture shows is the editor's own, at its place
+CARET_JS = r"""(function(hold){""" + FRAME + r"""var dd=null;
+  try{dd=(api.WordControl&&api.WordControl.m_oDrawingDocument)||null;}catch(e){}
+  try{if((!dd||!dd.TargetHtmlElement)&&api.getPDFDoc)dd=api.getPDFDoc().GetDrawingDocument();}catch(e){}
+  if(!dd||!dd.TargetHtmlElement)return 'no caret';
+  if(hold){if(!dd.NeedTarget)return 'no caret wanted';
+    if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;dd.__xrHeld=1;}
+    if(dd.showTarget)dd.showTarget(true);else dd.TargetHtmlElement.style.display='block';
+    var cs=w.getComputedStyle(dd.TargetHtmlElement),r=dd.TargetHtmlElement.getBoundingClientRect();
+    return 'held: '+cs.display+'/'+cs.visibility+' '+Math.round(r.width)+'x'+Math.round(r.height);}
+  if(dd.__xrHeld){dd.__xrHeld=0;if(dd.TargetStart)dd.TargetStart(true);}return 'released';})(__HOLD__)"""
+
+# what is in its hover state in the tab's page and editor frame (cards, Recent rows, ribbon buttons, tabs)
+HOVER_JS = r"""(function(){var out=[];[document].concat((function(){var f=document.querySelector('iframe[name=frameEditor]');
+  return f&&f.contentDocument?[f.contentDocument]:[];})()).forEach(function(d){
+  [].slice.call(d.querySelectorAll('#box-recent .row:hover, .document-creation-item:hover, .btn:hover, .ribtab:hover, .tool-menu li:hover'))
+    .forEach(function(e){out.push((e.className||e.tagName).toString().slice(0,40)+': '+(e.innerText||'').replace(/\s+/g,' ').trim().slice(0,30));});});
+  return out;})()"""
+
+
+def park_pointer():
+    """the Mac's own pointer in the menu bar's right end, off the window (no hover state from where it last was)"""
+    js = "ObjC.import('CoreGraphics');$.CGWarpMouseCursorPosition({x:1000,y:10});'parked'"
+    try:
+        r = subprocess.run(["osascript", "-l", "JavaScript", "-e", js], capture_output=True, text=True, timeout=20)
+        return (r.stdout or r.stderr).strip()[:120]
+    except Exception as e:
+        return "not parked: %s" % e
 
 
 async def frame_ready(pg, tag):
@@ -559,6 +600,7 @@ async def main():
             async with s.ws_connect(start["webSocketDebuggerUrl"], max_msg_size=0) as ws:
                 pg = Page(ws)
                 vw = await pg.ev("[innerWidth, innerHeight]") or [1000, 700]
+                log("pointer:", park_pointer())
                 # no hover highlight on a card: the page's pointer rests on an empty spot at the bottom
                 await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": vw[0] * 0.55, "y": vw[1] - 6})
                 await asyncio.sleep(1.5)
@@ -571,7 +613,7 @@ async def main():
                     open_tabs = [t.get("url", "")[-80:] for t in await targets() if t.get("type") == "page" and "/login/" not in t.get("url", "")]
                     if open_tabs:
                         log("documents still open on the start picture:", open_tabs)
-                    await page_shot_2x(pg, "start")
+                    await page_shot_2x(pg, "start", rest=(vw[0] * 0.55, vw[1] - 6))
 
         # documents, opened the way Finder does
         if MODE == "switch":
@@ -637,17 +679,25 @@ async def main():
                 if MODE == "shots":
                     # the page's pointer rests on an empty stretch of the status bar (no table handle, no tooltip)
                     vw = await pg.ev("[innerWidth, innerHeight]") or [1000, 700]
-                    await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": vw[0] * (0.36 if LANG == "en" else 0.64), "y": vw[1] - 11})
+                    rest = (vw[0] * (0.36 if LANG == "en" else 0.64), vw[1] - 11)
+                    park_pointer()
+                    await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": rest[0], "y": rest[1]})
                     await asyncio.sleep(2)
                     # what the picture holds: tips / dialogs, English words left in the Arabic UI, private data
                     res.setdefault("editors_final", {})[tag] = await pg.ev(TIPS_JS)
                     res.setdefault("ui", {})[tag] = await pg.ev(UI_JS)
                     log(tag, "final:", json.dumps(res["editors_final"][tag], ensure_ascii=False),
                         "latin:", json.dumps((res["ui"][tag] or {}).get("latin"), ensure_ascii=False))
-                    screen_shot(tag, place_window()[:4])
+                    caret = tag in ("editor", "slide", "pdf")
+                    box = place_window()[:4]
+                    if caret:
+                        await pg.ev(CARET_JS.replace("__HOLD__", "true"))
+                    screen_shot(tag, box)
+                    if caret:
+                        await pg.ev(CARET_JS.replace("__HOLD__", "false"))
                     res["titlebar_" + tag] = titlebar()
                     log("title bar (%s):" % tag, json.dumps(res["titlebar_" + tag], ensure_ascii=False)[:1500])
-                    await page_shot_2x(pg, tag)
+                    await page_shot_2x(pg, tag, rest=rest, caret=caret)
                 else:
                     screen_shot(tag, place_window()[:4])
                     res["windows_" + tag] = osa(PROC + ' to get {name, subrole} of every window')
@@ -685,6 +735,11 @@ if MODE == "shots":
     for tag in ("start", "editor", "sheet", "slide", "pdf"):
         if tag not in taken:
             bad.append("no %s picture" % tag)
+    for x in res.get("shots", []):
+        if x.get("page2x") and x.get("hover"):
+            bad.append("%s picture: hover state on %s" % (x.get("name"), x.get("hover")))
+        if x.get("page2x") and x.get("name") in ("editor", "slide", "pdf") and not str(x.get("caret", "")).startswith("held"):
+            bad.append("%s picture: caret not shown (%s)" % (x.get("name"), x.get("caret")))
     for tag, st in (res.get("ready") or {}).items():
         if st != "ok":
             bad.append("%s editor not ready: %s" % (tag, st))

@@ -437,9 +437,11 @@ def make_slides(path, lang):
         return s
 
     def place(ph, x, y, w, h, anchor=MSO_ANCHOR.TOP):
-        ph.left, ph.top, ph.width, ph.height = X(x, w), Inches(y), Inches(w), Inches(h)
+        # the box 0.1 in wider on each side with the default 0.1 in text inset: the text stays at x, and the box's
+        # selection frame (picture 4: the caret in the title) no longer runs through the first letter (run 26)
+        ph.left, ph.top, ph.width, ph.height = X(x - 0.1, w + 0.2), Inches(y), Inches(w + 0.2), Inches(h)
         ph.text_frame.vertical_anchor = anchor
-        ph.text_frame.margin_left = ph.text_frame.margin_right = 0
+        ph.text_frame.margin_left = ph.text_frame.margin_right = Inches(0.1)
         return ph.text_frame
 
     # 1 - title slide: ink background, the title block on the reading side, circles on the other

@@ -657,6 +657,47 @@ MAC_JS = r"""
       } else if (++n > 2400) clearInterval(t);
     }, 25);
   })();
+  // XR-FIELD-FIRST-INPUT (16 Nov 2026, store NOTES "first letter lost"): the first thing typed into a PDF form field in
+  // a script the editor had not used yet (digits in the Arabic form's date field) did not arrive; typed letter by letter
+  // the first letter was lost, typed as one piece the whole piece. The engine's input log (scripts/engine_checks.py,
+  // build-mac run 39) shows the text reaching the PDF editor's text entry (asc_enterText) and being refused: the entry
+  // asks for the active field (CPDFDoc.getTextController), which first checks that the field's fonts are in the
+  // document's loaded list (checkFieldFont) - the font chosen for the new script is not yet, so it starts loading it and
+  // answers "no field", and the text is dropped (the next input finds the font listed and works). The text entry now
+  // asks for the field's fonts itself, with a callback: if they are ready (or become ready at once) the text goes in
+  // now, otherwise it goes in when they are loaded, into the same field. Nothing changes once the fonts are listed.
+  // (window.__xrNoFirstInputFix = the original path, for the engine checks' control round)
+  (function fieldFirstInput(){
+    var n = 0, t = setInterval(function () {
+      var A = window.Asc && window.Asc.editor, P = window.AscPDF;
+      if (A && A.asc_enterText && A.getPDFDoc && P && P.CPDFDoc && P.CPDFDoc.prototype.checkFieldFont) {
+        clearInterval(t);
+        if (A.asc_enterText.__xr) return;
+        var orig = A.asc_enterText;
+        A.asc_enterText = function (codePoints, isFromPaste) {
+          var api = this, args = arguments, doc = null, f = null;
+          try { doc = api.getPDFDoc(); f = doc && doc.activeForm; } catch (e) {}
+          if (!isFromPaste && !window.__xrNoFirstInputFix && f && f.IsInForm && f.IsInForm() && f.IsCanEditText &&
+              f.IsCanEditText() && doc.checkFieldFont) {
+            var during = true, done = false, ready = true;
+            try {
+              ready = doc.checkFieldFont(f, function () {
+                done = true;
+                if (!during && doc.activeForm === f && f.IsInForm()) {
+                  window.__xrFirstInputRetried = (window.__xrFirstInputRetried || 0) + 1;
+                  orig.apply(api, args);
+                }
+              });
+            } catch (e) { ready = true; }
+            during = false;
+            if (!ready && !done) return true;      // entered by the callback once the field's fonts are loaded
+          }
+          return orig.apply(this, arguments);
+        };
+        A.asc_enterText.__xr = true;
+      } else if (++n > 2400) clearInterval(t);
+    }, 25);
+  })();
 })();
 /*XR-MAC-END*/
 """
@@ -693,10 +734,16 @@ log("Present button: Arabic label 'بدء العرض'")
 SDK_WORD = open(os.path.join(E, "sdkjs", "word", "sdk-all.js"), encoding="utf-8", errors="surrogateescape").read()
 for need in ("CBaseField.prototype.WriteRenderToBinary = function(memory)", "CDocumentRenderer.prototype.tg = function(gid, x, y, codePoints)",
              "LoadStringPathCode : function(code, isGid, fX, fY, worker)", "window['AscFonts'].getEmbeddedFontPrefix = function()",
-             "CPDFDoc.prototype.EnterDownActiveField = function()"):
+             "CPDFDoc.prototype.EnterDownActiveField = function()",
+             "CPDFDoc.prototype.checkFieldFont = function(oField, callback)",
+             "if (activeForm && this.checkFieldFont(activeForm) && activeForm.IsCanEditText())"):
     if need not in SDK_WORD:
         raise SystemExit("engine shim target missing in the payload's sdkjs: " + need)
-log("engine shim targets present in sdkjs/word/sdk-all.js")
+SDK_WORD_MIN = open(os.path.join(E, "sdkjs", "word", "sdk-all-min.js"), encoding="utf-8", errors="surrogateescape").read()
+for need in ("PDFEditorApi.prototype.asc_enterText = function(codePoints, isFromPaste)",):
+    if need not in SDK_WORD_MIN:
+        raise SystemExit("engine shim target missing in the payload's sdkjs (min): " + need)
+log("engine shim targets present in sdkjs/word/sdk-all.js + sdk-all-min.js")
 
 # XR-PPTX-BIDI-LANG (16 Nov 2026, store NOTES "presentation status bar language"): Arabic slide text written as
 # lang="ar-AE" was reported as "Arabic (Saudi Arabia)". A DrawingML run has ONE language (a:rPr lang), and the reader

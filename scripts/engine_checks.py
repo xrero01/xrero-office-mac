@@ -85,7 +85,23 @@ INPUT_LOG_JS = r"""(function(){""" + FRAME + r"""if(w.__xrInLog)return 'already'
     ['onInput','onKeyDown','onKeyPress','checkTextInput','addTextCodes','clear','compositeEnd'].forEach(function(n){wrap(ic,n,'ic');});}
   ['checkTextLight','loadFonts','checkText'].forEach(function(n){wrap(FP,n,'fp');});
   ['asc_enterText','asc_correctEnterText','asyncFontsDocumentStartLoaded','asyncFontsDocumentEndLoaded'].forEach(function(n){wrap(api,n,'api');});
+  var PD=w.AscPDF&&w.AscPDF.CPDFDoc&&w.AscPDF.CPDFDoc.prototype;
+  if(PD&&PD.checkFieldFont&&!PD.checkFieldFont.__xrl){var cf=PD.checkFieldFont;PD.checkFieldFont=function(fld,cb){
+    var before=(this.loadedFonts||[]).join(',');var r=cf.apply(this,arguments);
+    if(r===false)push(['doc.checkFieldFont',fld&&fld.GetFullName?fld.GetFullName():'?','cb='+!!cb,'ret=false','loaded='+before,
+      'ranges='+Object.keys((FP&&FP.FontsByRange)||{}).join(',')]);return r;};PD.checkFieldFont.__xrl=1;}
   return 'ok';})()"""
+
+# the Xrero account card (web/xr-account.js) over an editor or the start page: nothing may be typed while it is up
+WALL_JS = r"""(function(){var f=document.querySelector('iframe[name=frameEditor]');var d2=f&&f.contentDocument;
+  return !!(document.getElementById('xr-acct-ov')||(d2&&d2.getElementById('xr-acct-ov')));})()"""
+# XR_NO_SIGNUP (test-only runs make no account on xrero.com): the stored state of a signed-in user, as ui_test.py writes
+# it in its first session. In this second session the start page asks xrero.com about the stored test token again, is
+# told it is not a real one and signs out, so the state is written again once that answer is in.
+LOCAL_SESSION_JS = r"""new Promise(function(done){try{localStorage.setItem('xr-acct-token','local-ui-test');
+  localStorage.setItem('xr-acct',JSON.stringify({locked:false,name:'Mac Store Check',email:'mac-check@example.invalid'}));
+  var o=document.getElementById('xr-acct-ov'); if(o) o.parentNode.removeChild(o);}catch(e){done('error: '+e);return;}
+  setTimeout(function(){done(document.getElementById('xr-acct-ov')?'card came back':'open');},2500);})"""
 
 SLIDE_JS = r"""(function(op){""" + FRAME + r"""var o={};
   try{var wc=api.WordControl,p=wc.m_oLogicDocument;
@@ -369,6 +385,9 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
     async with s.ws_connect(t["webSocketDebuggerUrl"], max_msg_size=0) as ws:
         pg = Page(ws)
         r["ready"] = await ready(pg, "pdf")
+        r["wall"] = await pg.ev(WALL_JS)
+        if r["wall"] is not False:
+            return r
         if variant == "control":
             r["switch_off"] = await pg.ev("(function(){" + FRAME + "w.__xrNoFieldApFix=true;return true;})()")
         g = await pg.ev(PDF_GEOM_JS) or {}
@@ -382,6 +401,9 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
                 continue
             await pg.click((px[0] + px[2]) / 2, (px[1] + px[3]) / 2)
             st = await wait_active(pg, name)
+            if not (st and st[0] == name and st[2] is True):           # never type anywhere but into this field
+                r.setdefault("not_active", []).append([name, st])
+                continue
             await asyncio.sleep(0.6)
             await pg.call("Input.insertText", {"text": val})
             await asyncio.sleep(1.2)
@@ -423,13 +445,14 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
     return r
 
 
-async def case_pdf_first_input(s, app, evid, out):
+async def case_pdf_first_input(s, app, evid, out, variant="fixed"):
     """mas/store_demo_form_ar.pdf, filled like store_capture.py does it (Tab to each field, type each value as one
-    piece): the date field must get its first input"""
+    piece): the date field must get its first input. variant 'control' = the Mac fix off in this editor
+    (window.__xrNoFirstInputFix: the original path - it must still show the fault)"""
     src = os.path.join(ROOT, "mas", "store_demo_form_ar.pdf")
-    path = os.path.join(evid, "ar-booking.pdf")
+    path = os.path.join(evid, "ar-booking-%s.pdf" % variant)
     shutil.copy(src, path)
-    r = {}
+    r = {"variant": variant}
     t = await open_doc(s, app, path, "pdf")
     if not t:
         r["err"] = "the form did not open"
@@ -438,6 +461,12 @@ async def case_pdf_first_input(s, app, evid, out):
     async with s.ws_connect(t["webSocketDebuggerUrl"], max_msg_size=0) as ws:
         pg = Page(ws)
         r["ready"] = await ready(pg, "pdf")
+        r["wall"] = await pg.ev(WALL_JS)
+        if r["wall"] is not False:
+            return r
+        if variant == "control":
+            r["switch_off"] = await pg.ev("(function(){" + FRAME + "w.__xrNoFirstInputFix=true;return true;})()")
+        r["fix_present"] = await pg.ev("(function(){" + FRAME + "return !!(api&&api.asc_enterText&&api.asc_enterText.__xr);})()")
         r["log_installed"] = await pg.ev(INPUT_LOG_JS)
         g = await pg.ev(PDF_GEOM_JS) or {}
         org, sc = g.get("org") or [0, 0], g.get("sc") or 1
@@ -447,6 +476,9 @@ async def case_pdf_first_input(s, app, evid, out):
         for name, v in (("department", "المشاريع"), ("office", "الشارقة"), ("date", "24/11/2026")):
             await pg.key(9, "Tab")
             st = await wait_active(pg, name)
+            if not (st and st[0] == name and st[2] is True):           # never type anywhere but into this field
+                steps.append([name, "not active", st])
+                break
             await asyncio.sleep(0.8)
             await pg.call("Input.insertText", {"text": v})
             await asyncio.sleep(1.5)
@@ -462,7 +494,8 @@ async def case_pdf_first_input(s, app, evid, out):
                     steps.append(["date again", v, (await pg.ev(ACTIVE_JS) or ["", ""])[1]])
         r["steps"] = steps
         r["input_log"] = await pg.ev("(function(){" + FRAME + "return (w.__xrInLog||[]).slice(-120);})()")
-        await pg.shot(os.path.join(evid, "pdf-first-input.png"))
+        r["retried"] = await pg.ev("(function(){" + FRAME + "return w.__xrFirstInputRetried||0;})()")
+        await pg.shot(os.path.join(evid, "pdf-first-input-%s.png" % variant))
         r["saved"] = await save(pg, path)
     return r
 
@@ -482,6 +515,7 @@ async def case_pdf_lamalef(s, app, evid, out):
         pg = Page(ws)
         r["ready"] = await ready(pg, "pdf")
         await asyncio.sleep(3)
+        r["wall"] = await pg.ev(WALL_JS)
         g = await pg.ev(PDF_GEOM_JS) or {}
         org, sc = g.get("org") or [0, 0], g.get("sc") or 1
         r["sc"] = sc
@@ -517,6 +551,9 @@ async def case_pptx_lang(s, app, evid, out):
         pg = Page(ws)
         r["ready"] = await ready(pg, "slide")
         await asyncio.sleep(2)
+        r["wall"] = await pg.ev(WALL_JS)
+        if r["wall"] is not False:
+            return r
         pt = await pg.ev(SLIDE_JS.replace("__OP__", json.dumps("point"))) or {}
         r["point"] = pt
         if "x" in pt:
@@ -556,8 +593,19 @@ async def run(exe, app, arch, out_dir, ok):
             ok("engine_session_starts", start is not None, (start or {}).get("url", "")[-80:])
             if not start:
                 return out
-            await asyncio.sleep(6)
-            for name, fn in (("pdf_first_input", case_pdf_first_input), ("pdf_lamalef", case_pdf_lamalef),
+            await asyncio.sleep(8)
+            if os.environ.get("XR_NO_SIGNUP"):
+                async with s.ws_connect(start["webSocketDebuggerUrl"], max_msg_size=0) as ws:
+                    sp = Page(ws)
+                    for _ in range(3):
+                        out["local_session"] = await sp.ev(LOCAL_SESSION_JS)
+                        if out["local_session"] == "open":
+                            break
+                        await asyncio.sleep(4)
+            else:
+                out["local_session"] = "real account (signed in by the first session)"
+            for name, fn in (("pdf_first_input_control", lambda *a: case_pdf_first_input(*a, variant="control")),
+                             ("pdf_first_input", case_pdf_first_input), ("pdf_lamalef", case_pdf_lamalef),
                              ("pptx_lang", case_pptx_lang)):
                 try:
                     out[name] = await fn(s, app, evid, out)
@@ -599,8 +647,12 @@ async def run(exe, app, arch, out_dir, ok):
        "Latin in the embedded font: match %s, still text: %s" % (lm, (ff.get("ref") or {}).get("ap")))
     ok("pdf_ar_field_reopened", (fx.get("reopen_values") or {}).get("client") == AR_CLIENT
        and (fx.get("reopen_values") or {}).get("ref") == LATIN_REF, repr(fx.get("reopen_values")))
-    fi = out.get("pdf_first_input") or {}
-    ok("pdf_first_input_kept", fi.get("date_first") == "24/11/2026", "date after one input of 24/11/2026: %r" % fi.get("date_first"))
+    walls = [k for k, v in out.items() if isinstance(v, dict) and v.get("wall") is not False]
+    ok("engine_no_account_card", not walls, "account card over: %s (session: %r)" % (walls, out.get("local_session")))
+    fi, fc = out.get("pdf_first_input") or {}, out.get("pdf_first_input_control") or {}
+    ok("pdf_first_input_kept", fi.get("date_first") == "24/11/2026",
+       "date after one input of 24/11/2026: %r (retried after the field's fonts: %s); without the Mac fix (control): %r"
+       % (fi.get("date_first"), fi.get("retried"), fc.get("date_first")))
     pl = out.get("pptx_lang") or {}
     langs = ((pl.get("state") or {}).get("langs") or [])
     ae = ((pl.get("state") or {}).get("lcid") or {}).get("ae")

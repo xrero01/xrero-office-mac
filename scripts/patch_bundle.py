@@ -834,7 +834,7 @@ PPTX_LANG_OLD = ("var nLcid = Asc.g_oLcidNameToIdMap[lang];\n"
 PPTX_LANG_NEW = ("var nLcid = Asc.g_oLcidNameToIdMap[lang];\n"
                  "                        if(nLcid)\n"
                  "                            rPr.Lang.Val = nLcid;\n"
-                 "                        /*XR-PPTX-BIDI-LANG*/ if(nLcid && /^(ar|he|iw|fa|ur|ps|ug|yi|dv|syr|ckb)(-|$)|^(sd|ku|pa|ks|az|uz)-Arab(-|$)/i.test(lang))\n"
+                 "                        /*XR-PPTX-BIDI-LANG*/ if(nLcid && /^(ar|he|iw|fa|prs|ur|ps|ug|yi|dv|syr|ckb)(-|$)|^(sd|pa)-PK$|^(sd|ku|pa|ks|az|uz)-Arab(-|$)/i.test(lang))\n"
                  "                            rPr.Lang.Bidi = nLcid;")
 n_lang = 0
 for b in ("word", "slide", "cell", "visio"):

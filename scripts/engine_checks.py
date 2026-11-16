@@ -587,6 +587,13 @@ async def case_pdf_first_input(s, app, evid, out, variant="fixed"):
                 r["date_first"] = got
                 r["state"] = await pg.ev(FIRST_INPUT_STATE_JS)
                 if got != v:                                   # as a user would: type it again over what is there
+                    if await pg.ev(WALL_JS) is not False:      # never into the account card (owner rule, run 39)
+                        steps.append(["date again", "account card up"])
+                        break
+                    st2 = await wait_active(pg, name)
+                    if not (st2 and st2[0] == name and st2[2] is True):
+                        steps.append(["date again", "not active", st2])
+                        break
                     await pg.ev("(function(){" + FRAME + "try{var a=api.getPDFDoc().activeForm;a.content.SelectAll();"
                                 "return 'ok';}catch(e){return ''+e;}})()")
                     await pg.call("Input.insertText", {"text": v})

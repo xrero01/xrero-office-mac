@@ -345,27 +345,42 @@ async def page_shot_2x(pg, name, rest=None, caret=False):
     if rest:
         await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": rest[0], "y": rest[1]})
         await asyncio.sleep(0.8)
-    held = (await pg.ev(caret_js("hold", name)) or {}) if caret else {}
     dpr = await pg.ev("devicePixelRatio")
     hover = await pg.ev(HOVER_JS)
-    r = await pg.call("Page.captureScreenshot", {"format": "png"})
-    proof = None
-    if caret:
-        # (round 4b) the proof: the same page with the caret hidden; the picture must differ from it in the caret's box
-        held["off"] = (await pg.ev(caret_js("off", name)) or {}).get("caret")
+    held, on, off, tries = {}, None, None, []
+    # (round 4b) with a caret: the picture, then the proof - the same page with the caret hidden must differ inside the
+    # caret's box. Run 36: two of six pictures had no caret (both captures identical); a picture without its caret is
+    # taken again (up to three times), every try is kept in the evidence (caret_info.tries)
+    for n in range(3 if caret else 1):
+        if caret:
+            held = await pg.ev(caret_js("hold", name)) or {}
+            await asyncio.sleep(0.2)
+        r = await pg.call("Page.captureScreenshot", {"format": "png"})
+        on = base64.b64decode(r["result"]["data"]) if r.get("result", {}).get("data") else None
+        if not caret:
+            break
+        st = await pg.ev(caret_js("off", name)) or {}
+        held["off"] = st.get("caret")
+        held["at_capture"] = {k: v for k, v in st.items() if k != "caret"}
         await asyncio.sleep(0.3)
         proof = await pg.call("Page.captureScreenshot", {"format": "png"})
         await pg.ev(caret_js("release", name))
+        off = base64.b64decode(proof["result"]["data"]) if proof.get("result", {}).get("data") else None
+        if on and off and isinstance(held.get("rect"), list):
+            held["drawn"] = caret_drawn(on, off, held["rect"])
+        tries.append({k: held.get(k) for k in ("caret", "rect", "drawn", "at_capture")})
+        if isinstance(held.get("drawn"), (int, float)) and held["drawn"] >= 40:
+            break
+        await asyncio.sleep(1)
+    if caret:
+        held["tries"] = tries
     await pg.call("Emulation.clearDeviceMetricsOverride")
     await asyncio.sleep(2)
-    if r.get("result", {}).get("data"):
+    if on:
         p = os.path.join(OUT, "%s-%s-page2x.png" % (LANG, name))
-        on = base64.b64decode(r["result"]["data"])
         open(p, "wb").write(on)
-        if caret and (proof or {}).get("result", {}).get("data") and isinstance(held.get("rect"), list):
-            off = base64.b64decode(proof["result"]["data"])
+        if off:
             open(os.path.join(OUT, "%s-%s-page2x-nocaret.png" % (LANG, name)), "wb").write(off)
-            held["drawn"] = caret_drawn(on, off, held["rect"])
         res["shots"].append({"name": name, "page2x": os.path.basename(p), "viewport": vw[:2], "dpr_then": dpr,
                              "caret": held.get("caret") if caret else None, "caret_info": held if caret else None,
                              "hover": hover})
@@ -613,6 +628,11 @@ HIGHLIGHT, TEXT_NOTE, INK = 8, 0, 14          # AscPDF.ANNOTATIONS_TYPES (sdkjs 
 # keeps the caret shown (a timer takes oThis.DrawTarget when it starts), the caret is put again at its own place for the
 # current zoom, scroll and scale (UpdateTargetNoAttack - what the editor does after a scroll), and page_shot_2x proves
 # it is in the picture: the same page captured with the caret hidden must differ inside the caret's box.
+# Run 36 (that proof): still two of six 2x captures without the caret (English document, Arabic PDF; the captures with
+# and without it identical). Something else hid it between the hold and the capture (showTarget(false) - TargetEnd and
+# the blink are its only callers). While held, a hide is now recorded (the caller, for the evidence) and not done; the
+# capture then checks that the editor still wants that caret right after the picture (NeedTarget, no selection in the
+# document, the Notes field still in edit in the PDF) - the picture shows a caret only where the editor has one.
 CARET_JS = r"""(function(op,tag){""" + FRAME + r"""var dd=null;
   try{dd=(api.WordControl&&api.WordControl.m_oDrawingDocument)||null;}catch(e){}
   try{if((!dd||!dd.TargetHtmlElement)&&api.getPDFDoc)dd=api.getPDFDoc().GetDrawingDocument();}catch(e){}
@@ -620,18 +640,28 @@ CARET_JS = r"""(function(op,tag){""" + FRAME + r"""var dd=null;
   var el=dd.TargetHtmlElement;
   function show(v){if(dd.showTarget)dd.showTarget(v);else el.style.display=v?'block':'none';}
   function box(r){return [r.left+fr.left,r.top+fr.top,r.right+fr.left,r.bottom+fr.top].map(function(v){return Math.round(v*10)/10;});}
-  if(op==='release'){if(!dd.__xrDT)return {caret:'released'};
+  function unwrap(){if(dd.__xrST){dd.showTarget=dd.__xrST;dd.__xrST=null;}}
+  if(op==='release'){unwrap();if(!dd.__xrDT)return {caret:'released'};
     dd.DrawTarget=dd.__xrDT;dd.__xrDT=null;var run=dd.m_lTimerTargetId!=-1;
     if(run){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
     if((run||dd.__xrRun)&&dd.TargetStart)dd.TargetStart(true);return {caret:'released'};}
-  if(op==='off'){if(!dd.__xrDT){dd.__xrDT=dd.DrawTarget;dd.__xrRun=dd.m_lTimerTargetId!=-1;}
+  if(op==='off'){var st={need:!!dd.NeedTarget,vis:w.getComputedStyle(el).visibility+'/'+w.getComputedStyle(el).display,hides:dd.__xrHides||[]};
+    // (run 36) the editor's own state right after the picture: it still wants this caret
+    try{if(tag==='editor')st.selection=!!api.WordControl.m_oLogicDocument.IsSelectionUse();}catch(e){st.selection='error: '+e;}
+    try{if(tag==='pdf'){var af=api.getPDFDoc().activeForm;st.in_form=!!(af&&af.IsInForm&&af.IsInForm());st.field=af?af.GetFullName():'';}}catch(e){st.in_form='error: '+e;}
+    unwrap();
+    if(!dd.__xrDT){dd.__xrDT=dd.DrawTarget;dd.__xrRun=dd.m_lTimerTargetId!=-1;}
     dd.DrawTarget=function(){show(false);};
     if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
-    show(false);var c0=w.getComputedStyle(el);return {caret:'off: '+c0.display+'/'+c0.visibility};}
+    show(false);var c0=w.getComputedStyle(el);st.caret='off: '+c0.display+'/'+c0.visibility;return st;}
   if(!dd.NeedTarget)return {caret:'no caret wanted'};
   if(!dd.__xrDT){dd.__xrDT=dd.DrawTarget;dd.__xrRun=dd.m_lTimerTargetId!=-1;}
   dd.DrawTarget=function(){show(true);};
   if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=setInterval(dd.DrawTarget,500);}
+  if(dd.showTarget&&!dd.__xrST){dd.__xrST=dd.showTarget;dd.__xrHides=[];var own=dd.__xrST;
+    dd.showTarget=function(v){if(!v){dd.__xrHides.push(String((new Error()).stack||'').split('\n').slice(2,5)
+      .map(function(l){return l.trim().replace(/^at /,'').replace(/\(.*\//,'(').slice(0,90);}).join(' < '));v=true;}
+      return own.call(dd,v);};}
   var o={};try{if(dd.UpdateTargetNoAttack){dd.UpdateTargetNoAttack();o.placed=true;}}catch(e){o.placed='error: '+e;}
   show(true);
   var cs=w.getComputedStyle(el),r=el.getBoundingClientRect();
@@ -1403,6 +1433,15 @@ if MODE == "shots":
                     bad.append("document picture: the caret's paragraph %r is not the Arabic summary" % ci.get("para"))
             elif x.get("name") == "pdf":
                 want = (res.get("pdf_at_capture") or {}).get("notes_px")
+            # (run 36) right after the picture the editor still wants that caret (a hide asked for meanwhile was not
+            # done - recorded in at_capture.hides)
+            ac = ci.get("at_capture") or {}
+            if (ac.get("need") is not True or (x.get("name") == "editor" and ac.get("selection") is not False)
+                    or (x.get("name") == "pdf" and (ac.get("in_form") is not True or ac.get("field") != "notes"))):
+                bad.append("%s picture: the editor no longer wants the caret at the capture: %s" % (
+                    x.get("name"), json.dumps(ac, ensure_ascii=False)[:400]))
+            elif ac.get("hides"):
+                print("note: %s picture: hide asked while held (not done): %s" % (x.get("name"), ac.get("hides")))
             if x.get("name") in ("editor", "pdf"):
                 cx, cy = ((rc[0] + rc[2]) / 2, (rc[1] + rc[3]) / 2) if rc else (None, None)
                 if not (rc and want and want[0] - 4 <= cx <= want[2] + 4 and want[1] - 4 <= cy <= want[3] + 4):

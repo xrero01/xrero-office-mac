@@ -62,6 +62,12 @@ RIBBON_FIT = os.path.join(OUT, "ribbon-fit.json")
 PDF_NOTE = {"en": "The main room is free on this date.", "ar": "القاعة الكبرى متاحة في هذا التاريخ."}[LANG]
 # the Recent files' times on the start picture: working hours, newest first (run 27 showed the CI's 03:31-03:36)
 RECENT_TIMES = ["10:40", "10:31", "10:22", "10:15"]
+# the folder the pictures' files are opened from: the start picture's Recent files show its path (run 28 showed the CI
+# checkout, "...ro-office-mac/out/store/docs-shots-ar/"), so shots use a neutral shared folder with no user name in its
+# path; its files are copied into OUT/docs-shots-<lang> at the end (evidence). audit / switch keep their OUT folder.
+DOCS = "/Users/Shared/Office files" if MODE == "shots" else os.path.join(OUT, "docs-%s-%s" % (MODE, LANG))
+if MODE == "shots":
+    shutil.rmtree(DOCS, ignore_errors=True)
 # the Recent files of the start picture: the four demo files of the pictures, opened oldest first
 RECENTS = [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES["sheet"], DEMO["sheet"]), (DOC_NAME, "DEMO")]
 # the PDF form as the capture fills it in (store_demo.py PDF_FIELDS order = the form's tab order); True = tick (Enter)
@@ -244,6 +250,8 @@ START_JS = """(function(){var its=[].slice.call(document.querySelectorAll('#area
       return ((n&&n.innerText)||'').replace(/\\s+/g,' ').trim()+' ['+(i?getComputedStyle(i).backgroundImage.slice(0,26):'')+']';}),
     dates:[].slice.call(document.querySelectorAll('#box-recent .file-list-body .row')).filter(vis).map(function(e){
       var t=e.querySelector('.col-date');return ((t&&t.innerText)||'').trim();}),
+    locs:[].slice.call(document.querySelectorAll('#box-recent .file-list-body .row')).filter(vis).map(function(e){
+      var t=e.querySelector('.col-location');return ((t&&t.innerText)||'').trim();}),
     date_head:((document.querySelector('#box-recent .file-list-head .col-date')||document.querySelector('#box-recent .col-date')||{}).innerText||'').trim(),
     cards_bg:its.map(function(e){return getComputedStyle(e,'::before').backgroundImage.slice(27,60);}), xr_ar:document.documentElement.classList.contains('xr-ar'),
     latin_ui:latin(), wall:!!document.getElementById('xr-acct-ov')};
@@ -340,8 +348,8 @@ async def page_shot_2x(pg, name, rest=None, caret=False):
 
 
 def make_doc(name, src):
-    """a file to open, copied into the run's folder under the name the picture shows (src None -> a small PDF)"""
-    dst = os.path.join(OUT, "docs-%s-%s" % (MODE, LANG), name)
+    """a file to open, copied into DOCS under the name the picture shows (src None -> a small PDF)"""
+    dst = os.path.join(DOCS, name)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if src:
         shutil.copy(src, dst)
@@ -703,6 +711,8 @@ async def prep_pdf(pg):
     o["annots_full"] = await pg.ev(PDF_ANNOTS_JS)
     o["popover"] = await ctrl(pg, "#id-popover")
     o["errors"] = await pg.ev("(function(){" + FRAME + "return (w.__xrErr||[]).slice(0,30);})()")
+    # the boxes ticked with Enter through the Mac fix (patch_bundle.py pdfKeyTick: the tick is committed, run 28 lost it)
+    o["key_ticks"] = await pg.ev("(function(){" + FRAME + "return w.__xrPdfKeyTick||0;})()")
     return o
 
 
@@ -1044,6 +1054,11 @@ for _ in range(3):              # one more launch after the language switch (Set
     res["log"].append("relaunch")
     r = asyncio.run(main())
 json.dump(res, open(os.path.join(OUT, "capture-%s-%s.json" % (MODE, LANG)), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+if MODE == "shots":
+    try:
+        shutil.copytree(DOCS, os.path.join(OUT, "docs-shots-%s" % LANG), dirs_exist_ok=True)
+    except Exception as e:
+        print("docs evidence not copied:", e)
 print(json.dumps({k: v for k, v in res.items() if k != "log"}, ensure_ascii=False, indent=1)[:4000])
 bad = ["tips in " + t for t, v in res.get("editors", {}).items() if v and v.get("tips")]
 sp = res.get("start_page") or {}
@@ -1067,6 +1082,9 @@ if MODE == "shots":
         bad.append("recent files' times not at working hours: %s" % sp.get("dates"))
     if LANG == "ar" and sp.get("date_head") != "آخر فتح":
         bad.append("Arabic Recent files date column: %r" % sp.get("date_head"))
+    # (run 28) the Recent files' folder is the neutral shared one, not the CI checkout
+    if (sp.get("locs") or []) and not all("Shared/Office files" in x for x in sp.get("locs")):
+        bad.append("recent files' folder on the start picture: %s" % sp.get("locs"))
     for tag, m in (res.get("more_final") or {}).items():
         if not m or m.get("more") is not False:
             bad.append("%s picture: ribbon groups folded into More (window %s): %s" % (tag, res.get("picture_window"), m))
@@ -1125,6 +1143,11 @@ if MODE == "shots":
         print("note: no pen circle on the PDF picture (optional):", (pi.get("marks") or {}).get("pen_button"))
     rt = res.get("pdf_roundtrip") or {}
     print("PDF round trip (save, file, reopen):", "OK" if rt.get("ok") else "NOT OK", rt.get("checks"))
+    # (run 28: the boxes ticked with Enter were "Off" in the saved file) the store text says "form filling" only if
+    # the filled form, its ticks and the marks survive Save + reopen
+    if not rt.get("ok"):
+        bad.append("PDF round trip (save, file, reopen) NOT OK: %s file %s app %s" % (
+            rt.get("checks"), rt.get("file_fields"), rt.get("app_fields")))
 if bad:
     print("FAIL:", bad)
 sys.exit(3 if bad else 0)

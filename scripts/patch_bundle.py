@@ -425,10 +425,18 @@ n_sse_ar = 0
 for f in glob.glob(os.path.join(E, "web-apps", "apps", "spreadsheeteditor", "main", "locale", "ar.json")):
     t = open(f, encoding="utf-8").read()
     t2 = re.sub(r'("SSE\.Views\.Toolbar\.textTabCollaboration"\s*:\s*)"العمل المشترك"', '\\1"التعاون"', t)
+    # (16 Nov 2026, run 28: the wider picture window shows the Home tab's cells group) its "Format" button is left in
+    # English in the payload's Arabic text, and so is the number-format dialog's "Format" label; the other Arabic
+    # strings with this meaning say "التنسيق"
+    t2, n_fmt = re.subn(r'("SSE\.Views\.Toolbar\.textCellFormat"\s*:\s*)"Format"', '\\1"تنسيق"', t2)
+    t2, n_fmt2 = re.subn(r'("Common\.Views\.FormatSettingsDialog\.textFormat"\s*:\s*)"Format"', '\\1"التنسيق"', t2)
+    if re.search(r'"(SSE\.Views\.Toolbar\.textCellFormat|Common\.Views\.FormatSettingsDialog\.textFormat)"\s*:\s*"Format"', t2):
+        raise SystemExit("spreadsheet Format button: still English in " + f)
+    log("Arabic wording (spreadsheet Format button / format dialog):", n_fmt, n_fmt2)
     if t2 != t:
         open(f, "w", encoding="utf-8").write(t2)
         n_sse_ar += 1
-log("Arabic wording (spreadsheet editor Collaboration tab):", n_sse_ar, "files")
+log("Arabic wording (spreadsheet editor Collaboration tab, Format button):", n_sse_ar, "files")
 if n_sse_ar != 1:
     raise SystemExit("spreadsheet Collaboration tab: expected the spreadsheeteditor ar.json, changed %d" % n_sse_ar)
 # the spreadsheet formula bar in the Arabic (right-to-left) interface took the interface's direction for a formula too:
@@ -493,6 +501,35 @@ MAC_JS = r"""
       if (++n > 1200) clearInterval(t);
     }, 25);
     window.__xrNoFeatureTips = true;
+  })();
+  // PDF forms (sdkjs 9.4): Enter on a focused check box or radio button - the keyboard way to tick it - changed the
+  // box on screen only. CPDFDoc.EnterDownActiveField calls the box's onMouseUp() outside an editing action and never
+  // commits it, so Save wrote the box as "Off" (store capture run 28: ticked in the app, "Off" in the saved file and
+  // after reopening) and the editor logged "changesError". A mouse click goes through CPDFDoc.OnMouseUpField: the
+  // same toggle inside DoAction, then the commit. Enter on a box now takes that path; every other field keeps the
+  // original function. (16 Nov 2026; Mac bundle only)
+  (function pdfKeyTick(){
+    var n = 0, t = setInterval(function () {
+      var P = window.AscPDF, D = P && P.CPDFDoc && P.CPDFDoc.prototype, T = P && P.FIELD_TYPES;
+      if (D && T && D.EnterDownActiveField && D.OnMouseUpField) {
+        clearInterval(t);
+        if (D.EnterDownActiveField.__xr) return;
+        var orig = D.EnterDownActiveField;
+        D.EnterDownActiveField = function () {
+          var f = this.activeForm, k = f && f.GetType && f.GetType();
+          if (f && f.IsInForm && f.IsInForm() && (k === T.checkbox || k === T.radiobutton)) {
+            if (this.SetGlobalHistory) this.SetGlobalHistory();
+            f.SetInForm(false);
+            this.GetController().resetSelection();
+            this.OnMouseUpField(f);
+            window.__xrPdfKeyTick = (window.__xrPdfKeyTick || 0) + 1;
+            return;
+          }
+          return orig.apply(this, arguments);
+        };
+        D.EnterDownActiveField.__xr = true;
+      } else if (++n > 2400) clearInterval(t);
+    }, 25);
   })();
 })();
 /*XR-MAC-END*/

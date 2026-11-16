@@ -612,8 +612,9 @@ def make_pdf(path, lang, font_dir):
         else:
             w.field_type = fitz.PDF_WIDGET_TYPE_TEXT
             # (Helv has no Arabic: the app types Arabic in a fallback face that looked smaller and greyer than the
-            # 10.5 pt labels at 11 pt - 13 pt in the Arabic form, 16 Nov 2026 review)
-            w.text_font, w.text_fontsize, w.text_color = "Helv", 13 if rtl else 11, (0.12, 0.16, 0.18)
+            # 10.5 pt labels at 11 pt - 14 pt in the Arabic form, 16 Nov 2026 review; at 13 pt (run 28) the dots of
+            # the Notes line's "الثالث" still ran together at the listing's size)
+            w.text_font, w.text_fontsize, w.text_color = "Helv", 14 if rtl else 11, (0.12, 0.16, 0.18)
             if name == "notes":
                 w.field_flags |= fitz.PDF_TX_FIELD_IS_MULTILINE
         a = pg.add_widget(w)

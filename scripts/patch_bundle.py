@@ -456,6 +456,25 @@ for f in glob.glob(os.path.join(E, "web-apps", "apps", "pdfeditor", "main", "loc
         open(f, "w", encoding="utf-8").write(t2)
         n_pdf_ar += 1
 log("Arabic wording (PDF editor Collaboration tab):", n_pdf_ar, "files")
+# (16 Nov 2026, store pictures round 4) two Arabic labels the pictures show:
+#  - the PDF editor's Comment tab button "Text Comment" (it puts a typed text box on the page) is "تعليق للنص" ("a
+#    comment for the text"); its own tooltip already says "إدراج تعليق نصي" -> "تعليق نصي"
+#  - the presentation editor's notes pane says "اضغط لإضافة ملاحظات" ("press", phone / keyboard wording); a Mac is clicked
+#    -> "انقر لإضافة ملاحظات"
+AR_LABELS = (("pdfeditor", "PDFE.Views.Toolbar.capBtnTextComment", "تعليق للنص", "تعليق نصي"),
+             ("presentationeditor", "PE.Controllers.Main.txtAddNotes", "اضغط لإضافة ملاحظات", "انقر لإضافة ملاحظات"))
+for app, key, old_ar, new_ar in AR_LABELS:
+    hits = glob.glob(os.path.join(E, "web-apps", "apps", app, "main", "locale", "ar.json"))
+    if not hits:
+        raise SystemExit("Arabic label %s: no %s ar.json" % (key, app))
+    for f in hits:
+        t = open(f, encoding="utf-8").read()
+        t2, n = re.subn(r'("%s"\s*:\s*)"%s"' % (re.escape(key), re.escape(old_ar)), '\\1"%s"' % new_ar, t)
+        if not n and not re.search(r'"%s"\s*:\s*"%s"' % (re.escape(key), re.escape(new_ar)), t):
+            raise SystemExit("Arabic label %s: neither %r nor %r in %s" % (key, old_ar, new_ar, f))
+        if t2 != t:
+            open(f, "w", encoding="utf-8").write(t2)
+        log("Arabic label %s -> %s:" % (key, new_ar), n, "changed")
 # (16 Nov 2026, store-picture review) the spreadsheet editor's Arabic ribbon calls the same tab "العمل المشترك"; the
 # document, presentation and (above) PDF editors say "التعاون" - one name for the tab in all four
 n_sse_ar = 0

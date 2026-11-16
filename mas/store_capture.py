@@ -18,10 +18,12 @@ shots: the app in the chosen interface language (the app's own setting, asc_user
          slide  store_demo_slides[_ar].pptx - a real click into slide 1's title, the caret then put after its text
          pdf    store_demo_form[_ar].pdf - the Comment tab, then the reviewer's marks made with its tools (16 Nov
                 2026: the deadline line selected with the mouse + Highlight, a circle drawn with the red pen around
-                the date field, a sticky note added with right click > Add comment beside it), then the form filled
-                the way a user does it: Tab to each field, type, Enter on the check boxes to tick; the caret is left
-                in the Notes field. After the pictures the form is saved (Cmd+S), read back from the file and opened
-                again in the app (pdf_roundtrip: the store text may say "form filling and comments" only if it holds)
+                the date field, a sticky note added with right click > Add comment in the margin beside the deadline
+                line), then the form filled
+                the way a user does it: Tab to each field, type, Enter on the check boxes to tick. Round 4: the form
+                is saved (Cmd+S) BEFORE the pictures (no unsaved marker on its tab) and the Notes field clicked again
+                (the caret in it); after the pictures the saved file is read back and opened again in the app
+                (pdf_roundtrip: the store text may say "form filling and comments" only if it holds)
        Each picture is written twice:
          <lang>-<name>-window.png  the window as the screen shows it (screencapture, 1x on the CI display)
          <lang>-<name>-page2x.png  the same page drawn by the app at Retina scale (DevTools, device scale 2)
@@ -61,8 +63,8 @@ ACCOUNT = {"en": ("Operations team", "OT"), "ar": ("فريق العمليات", 
 # the window of all ten pictures: its width comes from ribbon-fit.json (picture_width), its height is fixed
 WIN_H = 800
 RIBBON_FIT = os.path.join(OUT, "ribbon-fit.json")
-# the sticky note the capture adds beside the date field (the PDF picture)
-PDF_NOTE = {"en": "The main room is free on this date.", "ar": "القاعة الكبرى متاحة في هذا التاريخ."}[LANG]
+# the sticky note the capture adds beside the deadline line (the PDF picture; round 4: in the margin, not by the date)
+PDF_NOTE = {"en": "Sent in time for this date.", "ar": "أُرسل الطلب في الموعد المطلوب."}[LANG]
 # the Recent files' times on the start picture: working hours, newest first (run 27 showed the CI's 03:31-03:36)
 RECENT_TIMES = ["10:40", "10:31", "10:22", "10:15", "09:52", "09:41", "09:30"]
 # the folder the pictures' files are opened from: the start picture's Recent files show its path (run 28 showed the CI
@@ -265,7 +267,8 @@ START_JS = """(function(){var its=[].slice.call(document.querySelectorAll('#area
       return t?getComputedStyle(t).unicodeBidi:'';})(),
     date_head:((document.querySelector('#box-recent .file-list-head .col-date')||document.querySelector('#box-recent .col-date')||{}).innerText||'').trim(),
     cards_bg:its.map(function(e){return getComputedStyle(e,'::before').backgroundImage.slice(27,60);}), xr_ar:document.documentElement.classList.contains('xr-ar'),
-    latin_ui:latin(), wall:!!document.getElementById('xr-acct-ov')};
+    latin_ui:latin(), wall:!!document.getElementById('xr-acct-ov'),
+    menu:[].slice.call(document.querySelectorAll('.tool-menu li a')).filter(vis).map(function(e){return (e.innerText||'').replace(/\\s+/g,' ').trim();}).filter(String)};
   function vis(e){var s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}
   function latin(){var out=[],w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT),n;
     while((n=w.nextNode())){var t=n.nodeValue.replace(/\\s+/g,' ').trim(),e=n.parentElement;
@@ -442,6 +445,53 @@ SLIDE_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
       o.at_end=tc.IsCursorAtEnd?tc.IsCursorAtEnd():'unknown';}
   }catch(e){o.err=''+e;}o.font=fontbox();o.statusbar=statusbar();return o;})()"""
 
+# (round 4, gallery-size legibility: the hero picture's page text was about 7 pt at the store's product-page size) the
+# document picture at the editor's own 120 % zoom, the report's whole text block in view: zoom (sdkjs api.zoom), then
+# the view scrolled so the title is near its top (the editor's vertical scroll bar), then measured - the first and
+# last paragraphs' tops / bottoms against the view (page coordinates of the editor canvas, CSS px)
+EDITOR_VIEW_JS = r"""(function(op,arg){""" + FRAME + r"""var o={};
+  try{var wc=api.WordControl,ld=wc.m_oLogicDocument,dd=wc.m_oDrawingDocument;
+    if(op==='zoom')api.zoom(arg);
+    if(op==='scroll'&&wc.m_oScrollVerApi)wc.m_oScrollVerApi.scrollByY(arg);
+    var c=ld.Content,first=c[0],last=c[c.length-1];
+    function pg(p,i){try{return p.GetAbsolutePage(i);}catch(e){return p.Get_AbsolutePage(i);}}
+    var t=first.Pages[0].Bounds.Top,b=last.Pages[last.Pages.length-1].Bounds.Bottom;
+    var a=dd.ConvertCoordsToCursor(0,t,pg(first,0)),z=dd.ConvertCoordsToCursor(0,b,pg(last,last.Pages.length-1));
+    var v=d.getElementById('id_viewer').getBoundingClientRect();
+    o={zoom:wc.m_nZoomValue,top:a.Y,bottom:z.Y,view_h:Math.round(v.height),paras:c.length,
+      last:(last.GetText?last.GetText():'').slice(0,30)};
+  }catch(e){o.err=''+e;}return o;})(__OP__,__ARG__)"""
+
+
+async def editor_view(pg, op="measure", arg=0):
+    return await pg.ev(EDITOR_VIEW_JS.replace("__OP__", json.dumps(op)).replace("__ARG__", json.dumps(arg))) or {}
+
+
+async def editor_zoom(pg, zoom=120, margin=26):
+    """the document picture's zoom and scroll (see EDITOR_VIEW_JS); back to 100 % if the text block does not fit"""
+    steps = [await editor_view(pg, "zoom", zoom)]
+    await asyncio.sleep(2.5)
+    for _ in range(3):
+        m = await editor_view(pg)
+        steps.append(m)
+        if "top" not in m:
+            break
+        if margin - 6 <= m["top"] <= margin + 6 and m["bottom"] <= m["view_h"] - 8:
+            break
+        steps.append(await editor_view(pg, "scroll", m["top"] - margin))
+        await asyncio.sleep(1.5)
+    m = await editor_view(pg)
+    fits = "top" in m and m["top"] >= 6 and m["bottom"] <= m["view_h"] - 6
+    if not fits:
+        steps.append(await editor_view(pg, "zoom", 100))
+        await asyncio.sleep(2.5)
+        m = await editor_view(pg)
+        fits = "top" in m and m["top"] >= 0 and m["bottom"] <= m["view_h"]
+    out = {"final": m, "fits": fits, "steps": steps}
+    log("editor zoom:", json.dumps(out, ensure_ascii=False)[:1200])
+    return out
+
+
 # the Comment tab (annotation tools) and a blank spot of the page's margin (gives the page the keyboard)
 PDF_PREP_JS = r"""(function(){""" + FRAME + r"""var o={};
   var tab=d.querySelector('.ribtab a[data-tab=comment]');
@@ -471,7 +521,12 @@ UI_JS = r"""(function(){""" + FRAME + r"""
       all.push(t);if(/[A-Za-z]{2,}/.test(t))latin.push(t.slice(0,60));}});
   var inputs=[].slice.call(d.querySelectorAll('input,textarea')).filter(vis).map(function(i){return i.value;}).filter(String);
   var chip=d.getElementById('xr-b-acct');
-  return {latin:latin,inputs:inputs,text:all.join(' | ').slice(0,6000),chip:chip?chip.textContent:null};})()"""
+  // (round 4) Arabic labels the pictures show (patch_bundle.py AR_LABELS): found anywhere in the visible text (a
+  // two-line ribbon caption is two text nodes: joined with a space)
+  var whole=all.join(' | '),flat=all.join(' '),probe={};['تعليق نصي','تعليق للنص'].forEach(function(t){probe[t]=flat.indexOf(t)>=0;});
+  // the presentation editor's notes placeholder (drawn on the canvas from the editor's translation table)
+  var notes='';try{notes=w.AscCommon.translateManager.getValue('Click to add notes');}catch(e){}
+  return {latin:latin,inputs:inputs,text:whole.slice(0,6000),chip:chip?chip.textContent:null,probe:probe,notes:notes};})()"""
 
 
 # (round 3) the editor's header: the window title's centre against the page's centre (the Arabic title sat 90 pt left
@@ -601,8 +656,8 @@ async def prep_slide(pg):
 
 def pdf_marks():
     """where the reviewer's marks go, in PDF points of the demo form (read with PyMuPDF): the deadline line (its words,
-    selected from the line's start to its end), the pen circle around the date field, the sticky note's corner between
-    the date label and the field (the places store_demo.py used for the marks it stored before 16 Nov 2026)"""
+    selected from the line's start to its end), the pen circle around the date field, the sticky note's corner in the
+    page margin beside the deadline line (round 4; it was between the date label and the field)"""
     import math
     try:
         import pymupdf
@@ -611,7 +666,10 @@ def pdf_marks():
     d = pymupdf.open(DEMO["pdf"])
     pg = d[0]
     W, rtl = pg.rect.width, LANG == "ar"
-    clip = pymupdf.Rect(W - 545, 350, W - 50, 368) if rtl else pymupdf.Rect(50, 350, 545, 368)
+    widgets = {w.field_name: pymupdf.Rect(w.rect) for w in pg.widgets()}
+    # the deadline line: the text line right under the Notes field (round 4: the form's rows moved - store_demo.py)
+    nr = widgets["notes"]
+    clip = pymupdf.Rect(nr.x0, nr.y1 + 2, nr.x1, nr.y1 + 32)
     # the line's visible letters (round 3: the Arabic line ends with an invisible no-break space - store_demo.py)
     box = None
     for b in pg.get_text("rawdict", clip=clip)["blocks"]:
@@ -620,11 +678,17 @@ def pdf_marks():
                 for ch in s["chars"]:
                     if ch["c"].strip() and ch["c"] != " ":
                         box = pymupdf.Rect(ch["bbox"]) if box is None else box | pymupdf.Rect(ch["bbox"])
-    dr = [pymupdf.Rect(w.rect) for w in pg.widgets() if w.field_name == "date"][0]
+    dr = widgets["date"]
     d.close()
-    cx, cy, rx, ry = (dr.x0 + dr.x1) / 2, (dr.y0 + dr.y1) / 2, dr.width / 2 + 9, dr.height / 2 + 8
-    ring = [(cx + rx * (1 + 0.03 * math.sin(3 * t)) * math.cos(t), cy + ry * (1 + 0.05 * math.cos(2 * t)) * math.sin(t))
-            for t in [-2.7 + k * (2 * math.pi + 0.5) / 60 for k in range(61)]]
+    # the pen circle (round 4 review: tilted and tight - the field's corners poked out, its far end touched the next
+    # label): a level ellipse 20 pt clear of the field's sides and 19 pt above / below it (about 6.5 pt off its corners;
+    # store_demo.py gives the date row that room), drawn once round from the left and a little past the start, the
+    # overlap just inside the start
+    cx, cy, rx, ry = (dr.x0 + dr.x1) / 2, (dr.y0 + dr.y1) / 2, dr.width / 2 + 20, dr.height / 2 + 19
+    t0, n, over = -3.3, 72, 0.4
+    ts = [t0 + k * (2 * math.pi + over) / n for k in range(n + 1)]
+    ring = [(cx + rx * f * math.cos(t), cy + ry * f * math.sin(t))
+            for t, f in ((t, 1 - 0.035 * max(0.0, t - t0 - 2 * math.pi) / over) for t in ts)]
     y = (box.y0 + box.y1) / 2
     # the drag ends past the line's end (round 3: ending 0.4 pt inside the last word left its full stop out of the
     # highlight in both languages - "meeting|." / "الأقل|."). Run 32: 3 pt past the end took the English full stop but
@@ -635,8 +699,11 @@ def pdf_marks():
     else:
         tries = [(box.x0 + 0.4, box.x1 + 3), (box.x0 + 0.4, box.x1 + 15), (box.x1 + 15, box.x0 - 15)]
     lines = [[(a + (b - a) * k / 16.0, y) for k in range(17)] for a, b in tries]
-    note = (dr.x1 + 12, dr.y0 + 2) if rtl else (dr.x0 - 32, dr.y0 + 2)
-    return {"lines": lines, "ring": ring, "note": note, "box": [round(v, 1) for v in box], "date": [round(v, 1) for v in dr]}
+    # the sticky note (round 4 review: it sat wedged between the date label and the circle): in the page margin beside
+    # the line it comments on, 8 pt before the line's start (its icon is about 20 pt square, its corner at the click)
+    note = (box.x1 + 8, y - 10) if rtl else (box.x0 - 28, y - 10)
+    return {"lines": lines, "ring": ring, "note": note, "box": [round(v, 1) for v in box], "date": [round(v, 1) for v in dr],
+            "ring_box": [round(v, 1) for v in (cx - rx, cy - ry, cx + rx, cy + ry)]}
 
 
 async def ctrl(pg, sel):
@@ -844,9 +911,23 @@ def recent_times():
     return done
 
 
-async def pdf_roundtrip(pg, dst, targets, s):
-    """the filled + annotated form saved (Cmd+S), read back from the file (PyMuPDF), and opened again in the app (a copy,
-    in a new tab): the store text may say "form filling and comments" only if all three keep the fields and the marks"""
+# (round 4) the PDF editor's unsaved state (its tab title shows "*" / "•" while it is true - the native tab strip, not
+# readable here), the active field and where the Notes field is on the page (page coordinates, for a click)
+PDF_SAVED_JS = r"""(function(){""" + FRAME + r"""var o={};
+  try{o.modified=!!(api.isDocumentModified?api.isDocumentModified():api.isDocumentModify);o.modify_flag=!!api.isDocumentModify;
+    var doc=api.getPDFDoc(),a=doc.activeForm;o.active=a?a.GetFullName():'';o.in_form=a&&a.IsInForm?a.IsInForm():false;
+    var nf=doc.widgets.filter(function(x){return x.GetFullName()==='notes';})[0];
+    if(nf){var r=nf.GetRect(),v=api.getDocumentRenderer(),det=v.getPageLikeDetector(0),rp=w.AscCommon.AscBrowser.retinaPixelRatio||1;
+      var cv=v.canvas.getBoundingClientRect(),W=v.file.pages[0].W,sc=(det.w/rp)/W,pl=cv.left+det.x/rp,pt=cv.top+det.y/rp;
+      o.notes_rect=r;o.notes_px=[fr.left+pl+r[0]*sc,fr.top+pt+r[1]*sc,fr.left+pl+r[2]*sc,fr.top+pt+r[3]*sc].map(Math.round);}
+  }catch(e){o.err=''+e;}return o;})()"""
+
+
+async def pdf_save(pg, dst):
+    """(round 4 review: the PDF picture showed the unsaved marker on its tab - "*Booking.pdf" / "•حجز قاعة.pdf") the
+    filled + annotated form is saved (Cmd+S) BEFORE the pictures. Saving takes the caret out of the Notes field (sdkjs
+    PDFEditorApi.asc_Save blurs the active field), so the Notes field is then clicked once at the end of its line, as a
+    user does to go on typing - no change, the document stays saved"""
     out = {}
     try:
         m0 = os.stat(dst).st_mtime
@@ -858,6 +939,28 @@ async def pdf_roundtrip(pg, dst, targets, s):
         await asyncio.sleep(4)
         out["saved"] = os.stat(dst).st_mtime > m0
         out["tips_after_save"] = await pg.ev(TIPS_JS)
+        out["after_save"] = st = await pg.ev(PDF_SAVED_JS) or {}
+        px = st.get("notes_px")
+        if px and st.get("active") != "notes":
+            # the end of the line: its right end in English, its left end in the right-aligned Arabic field
+            x = px[2] - 14 if LANG == "en" else px[0] + 14
+            await pg.click(x, px[1] + min(12, (px[3] - px[1]) / 3))
+            await asyncio.sleep(1.5)
+        out["after_click"] = await pg.ev(PDF_SAVED_JS) or {}
+        out["fields_after"] = (await pg.ev(PDF_STATE_JS) or {}).get("fields")
+    except Exception as e:
+        out["err"] = "%s: %s" % (type(e).__name__, e)
+    log("PDF saved before the pictures:", json.dumps(out, ensure_ascii=False)[:1500])
+    return out
+
+
+async def pdf_roundtrip(pg, dst, targets, s, saved):
+    """the filled + annotated form as saved (pdf_save, before the pictures) read back from the file (PyMuPDF), and
+    opened again in the app (a copy, in a new tab): the store text may say "form filling and comments" only if all
+    three keep the fields and the marks"""
+    out = {"saved": bool((saved or {}).get("saved"))}
+    try:
+        out["modified_after_pictures"] = (await pg.ev(PDF_SAVED_JS) or {}).get("modified")
         try:
             import pymupdf
         except ImportError:
@@ -1064,6 +1167,8 @@ async def main():
                     info = await PREP[tag](pg)
                     res[tag + "_info"] = info
                     log(tag + ":", json.dumps(info, ensure_ascii=False))
+                    if tag == "pdf":
+                        res["pdf_save"] = await pdf_save(pg, dst)
                 elif MODE == "shots":
                     info = await pg.ev("""(function(){var f=document.querySelector('iframe[name=frameEditor]');var w=f&&f.contentWindow||window;
                       // the caret in the Arabic summary (the headline is about Arabic: the status bar's language and the
@@ -1085,6 +1190,7 @@ async def main():
                         tabs:[].slice.call(w.document.querySelectorAll('#toolbar .ribtab a')).map(function(a){return a.innerText.trim();}).filter(String).slice(0,12)};})()""")
                     res["editor_info"] = info
                     log("editor:", json.dumps(info, ensure_ascii=False))
+                    res["editor_zoom"] = await editor_zoom(pg)
                 if MODE == "shots":
                     # the page's pointer rests on an empty stretch of the status bar (no table handle, no tooltip)
                     vw = await pg.ev("[innerWidth, innerHeight]") or [1000, 700]
@@ -1106,6 +1212,8 @@ async def main():
                     box = place_window()[:4]
                     await asyncio.sleep(1.5)
                     res.setdefault("more_final", {})[tag] = await pg.ev(MORE_JS)
+                    if tag == "pdf":                # (round 4) saved, caret in Notes, at the moment of the pictures
+                        res["pdf_at_capture"] = await pg.ev(PDF_SAVED_JS)
                     if caret:
                         await pg.ev(CARET_JS.replace("__HOLD__", "true"))
                     screen_shot(tag, box)
@@ -1117,7 +1225,7 @@ async def main():
                     res.setdefault("editor_users", []).append(
                         (re.search(r"[?&]username=([^&]*)", ed.get("url", "")) or [None, ""])[1])
                     if tag == "pdf":
-                        res["pdf_roundtrip"] = await pdf_roundtrip(pg, dst, targets, s)
+                        res["pdf_roundtrip"] = await pdf_roundtrip(pg, dst, targets, s, res.get("pdf_save"))
                 else:
                     screen_shot(tag, place_window()[:4])
                     res["windows_" + tag] = osa(PROC + ' to get {name, subrole} of every window')
@@ -1163,8 +1271,23 @@ if MODE == "shots":
     # (16 Nov 2026 review) the account reads as a team account, at working hours, the Arabic date column's own name
     if sp.get("pill") != "%s|%s" % (ACCOUNT[1], ACCOUNT[0]):
         bad.append("account pill %r, not %s|%s" % (sp.get("pill"), ACCOUNT[1], ACCOUNT[0]))
-    if (sp.get("dates") or []) and not all(d.split()[-1:] and d.split()[-1] in RECENT_TIMES for d in sp.get("dates")):
-        bad.append("recent files' times not at working hours: %s" % sp.get("dates"))
+    # (round 4) the dates in the page's language (web/xr-home.js recentDates): en-US "11/16/2026 10:40 AM", Arabic
+    # "16/11/2026 10:40" - and the times still the working hours set in recents.xml
+    date_re = {"en": r"^\d{1,2}/\d{1,2}/\d{4} (\d{1,2}):(\d\d) ([AP]M)$", "ar": r"^\d\d/\d\d/\d{4} (\d\d):(\d\d)$"}[LANG]
+
+    def hhmm(d):
+        m = re.match(date_re, d or "")
+        if not m:
+            return None
+        h = int(m.group(1))
+        if LANG == "en":
+            h = h % 12 + (12 if m.group(3) == "PM" else 0)
+        return "%02d:%s" % (h, m.group(2))
+    if not (sp.get("dates") or []) or not all(hhmm(d) in RECENT_TIMES for d in sp.get("dates")):
+        bad.append("recent files' dates not in the %s format at working hours: %s" % (LANG, sp.get("dates")))
+    # (round 4) the Arabic side menu: the items with the article ("القوالب", "الإعدادات" - web/xr-home.js)
+    if LANG == "ar" and not ({"القوالب", "الإعدادات"} <= set(sp.get("menu") or []) and not {"قوالب", "إعدادات"} & set(sp.get("menu") or [])):
+        bad.append("Arabic start page side menu: %s" % sp.get("menu"))
     if LANG == "ar" and sp.get("date_head") != "آخر فتح":
         bad.append("Arabic Recent files date column: %r" % sp.get("date_head"))
     # (run 28) the Recent files' folder is the neutral shared one, not the CI checkout
@@ -1176,6 +1299,12 @@ if MODE == "shots":
     for tag, m in (res.get("more_final") or {}).items():
         if not m or m.get("more") is not False:
             bad.append("%s picture: ribbon groups folded into More (window %s): %s" % (tag, res.get("picture_window"), m))
+    # (round 4) the document picture: the report's whole text block in view (at 120 %, else 100 %)
+    ez = res.get("editor_zoom") or {}
+    if not ez.get("fits"):
+        bad.append("document picture: the text block is not all in view: %s" % json.dumps(ez.get("final"))[:300])
+    elif (ez.get("final") or {}).get("zoom") != 120:
+        print("note: the document picture is at %s %%, not 120 %%" % (ez.get("final") or {}).get("zoom"))
     if not str((res.get("editor_info") or {}).get("caret", "")).startswith("summary"):
         bad.append("caret not in the Arabic summary: %s" % (res.get("editor_info") or {}).get("caret"))
     # the five-picture set (16 Nov 2026): every editor picture taken, ready, no tips / dialogs, nothing private
@@ -1223,6 +1352,14 @@ if MODE == "shots":
             bad.append("%s picture: header not measured" % tag)
     # (round 3) Present: the label clear of the split divider, the chevron white, the Arabic label "بدء العرض" (XR-PRESENT)
     pr = res.get("present") or {}
+    # (round 4) the Arabic Text Comment button "تعليق نصي" (PDF picture) and the notes placeholder "انقر لإضافة ملاحظات"
+    # (presentation picture) - patch_bundle.py AR_LABELS
+    if LANG == "ar":
+        pu, su = (res.get("ui") or {}).get("pdf") or {}, (res.get("ui") or {}).get("slide") or {}
+        if (pu.get("probe") or {}).get("تعليق نصي") is not True or (pu.get("probe") or {}).get("تعليق للنص") is not False:
+            bad.append("PDF picture: Text Comment label %s" % pu.get("probe"))
+        if su.get("notes") != "انقر لإضافة ملاحظات":
+            bad.append("presentation picture: notes placeholder %r" % su.get("notes"))
     want_label = {"en": "Present", "ar": "بدء العرض"}[LANG]
     if (pr.get("label") != want_label or not isinstance(pr.get("gap"), (int, float)) or pr["gap"] < 5
             or any(c != "rgb(255, 255, 255)" for c in (pr.get("caret") or ["none"]))):
@@ -1254,6 +1391,26 @@ if MODE == "shots":
             (pi.get("marks") or {}).get("marks", {}).get("box"), (pi.get("marks") or {}).get("highlight_rects")))
     elif hc is not True:
         print("note: highlight coverage not measured:", hc, (pi.get("marks") or {}).get("highlight_rects"))
+    # (round 4) the PDF pictures are taken after the save: no unsaved marker on the tab, the caret back in Notes
+    pc, ps = res.get("pdf_at_capture") or {}, res.get("pdf_save") or {}
+    if not ps.get("saved") or pc.get("modified") is not False or pc.get("active") != "notes" or pc.get("in_form") is not True:
+        bad.append("PDF picture not taken saved with the caret in Notes (save %s, at capture %s)" % (
+            ps.get("saved"), json.dumps(pc, ensure_ascii=False)[:400]))
+    if (res.get("pdf_roundtrip") or {}).get("modified_after_pictures") is not False:
+        bad.append("PDF modified again after the pictures: %s" % (res.get("pdf_roundtrip") or {}).get("modified_after_pictures"))
+    # (round 4) the sticky note in the margin beside the deadline line, the pen circle clear of the date field
+    mk = (pi.get("marks") or {})
+    try:
+        an = {a[0]: a[1] for a in (pi.get("annots_full") or []) if isinstance(a, list) and len(a) > 1}
+        bx, dt = mk["marks"]["box"], mk["marks"]["date"]
+        nt, ink = an.get(TEXT_NOTE), an.get(INK)
+        note_ok = bool(nt) and (nt[2] <= bx[0] - 4 if LANG == "en" else nt[0] >= bx[2] + 4) and nt[1] < bx[3] and nt[3] > bx[1]
+        ring_ok = bool(ink) and ink[0] <= dt[0] - 12 and ink[2] >= dt[2] + 12 and ink[1] <= dt[1] - 12 and ink[3] >= dt[3] + 12
+        if not note_ok or not ring_ok:
+            bad.append("PDF marks: note beside the line %s (note %s, line %s), circle clear of the date field %s (ink %s, "
+                       "field %s)" % (note_ok, nt, bx, ring_ok, ink, dt))
+    except Exception as e:
+        bad.append("PDF marks not measured: %s" % e)
     rt = res.get("pdf_roundtrip") or {}
     print("PDF round trip (save, file, reopen):", "OK" if rt.get("ok") else "NOT OK", rt.get("checks"))
     # (run 28: the boxes ticked with Enter were "Off" in the saved file) the store text says "form filling" only if

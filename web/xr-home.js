@@ -134,11 +134,14 @@
     actOpenLocal: 'فتح ملف محلي', actAbout: 'حول', actRecentFiles: 'الملفات الأخيرة', listRecentFileTitle: 'الملفات الأخيرة',
     // the Recent files' date column (16 Nov 2026): "مفتوحة مؤخرا" (recently opened, fem., no tanween) over a column of
     // dates; the English column says "Last opened"
-    colLastOpened: 'آخر فتح'
+    colLastOpened: 'آخر فتح',
+    // the side menu (16 Nov 2026, store pictures round 4): "الرئيسية" has the article, "قوالب" and "إعدادات" did not
+    actTemplates: 'القوالب', actSettings: 'الإعدادات'
   };
   var AR_TEXT = {
     'Drag your files here or': AR.labelDropFile, 'Select file': AR.labelSelectFile, 'جدول بياني': AR.newXlsx,
-    'فتح الملف المحلي': AR.actOpenLocal, 'الملفات المستجدّة': AR.listRecentFileTitle, 'مفتوحة مؤخرا': AR.colLastOpened
+    'فتح الملف المحلي': AR.actOpenLocal, 'الملفات المستجدّة': AR.listRecentFileTitle, 'مفتوحة مؤخرا': AR.colLastOpened,
+    'قوالب': AR.actTemplates, 'إعدادات': AR.actSettings
   };
   function arTable() {
     try {
@@ -161,19 +164,51 @@
       while ((n = w2.nextNode())) if (n.nodeValue.trim() === 'عن') n.nodeValue = n.nodeValue.replace('عن', AR.actAbout);
     }
   }
+  // The Recent files' "Last opened" dates (16 Nov 2026, store pictures round 4): the Mac app writes them as
+  // "16.11.2026 10:40" (dd.mm.yyyy, 24-hour) in every language - a European order on the US English page, and dots where
+  // an Arabic (UAE / Gulf) reader writes dd/mm/yyyy. In the page's own language: English (United States) "11/16/2026
+  // 10:40 AM", Arabic "16/11/2026 10:40" (Western digits, as the rest of the page); other languages as the app gives them
+  var DATE_RE = /^(\d{2})\.(\d{2})\.(\d{4}) (\d{2}):(\d{2})$/;
+  function dateKind() {
+    var l = '';
+    try { l = (new URLSearchParams(location.search).get('lang') || '').toLowerCase(); } catch (e) {}
+    if (!l) l = (navigator.language || '').toLowerCase();
+    if (l.indexOf('ar') === 0) return 'ar';
+    if (l === 'en-us' || l === 'en') return 'us';
+    return '';
+  }
+  function fmtDate(t, kind) {
+    var m = DATE_RE.exec(t);
+    if (!m) return null;
+    if (kind === 'ar') return m[1] + '/' + m[2] + '/' + m[3] + ' ' + m[4] + ':' + m[5];
+    var h = +m[4];
+    return (+m[2]) + '/' + (+m[1]) + '/' + m[3] + ' ' + (h % 12 || 12) + ':' + m[5] + ' ' + (h < 12 ? 'AM' : 'PM');
+  }
+  function recentDates() {
+    var kind = dateKind();
+    if (!kind || !document.body) return;
+    [].slice.call(document.querySelectorAll('.file-list-body .col-date')).forEach(function (c) {
+      var w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT), n, t, f;
+      while ((n = w.nextNode())) {
+        t = n.nodeValue.trim();
+        f = t && fmtDate(t, kind);
+        if (f) n.nodeValue = n.nodeValue.replace(t, f);
+      }
+    });
+  }
   arTable();
   var pending = false;
   function arSoon() {
     if (pending) return;
     pending = true;
-    (window.requestAnimationFrame || setTimeout)(function () { pending = false; arText(); });
+    (window.requestAnimationFrame || setTimeout)(function () { pending = false; arText(); recentDates(); });
   }
   function arWatch() {
-    arTable(); arText();
+    arTable(); arText(); recentDates();
     if (window.MutationObserver && document.body)
       new MutationObserver(arSoon).observe(document.body, { childList: true, subtree: true, characterData: true });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', arWatch); else arWatch();
-  setInterval(arText, 1500);
+  setInterval(function () { arText(); recentDates(); }, 1500);
 })();
 /*XR-HOME-END*/

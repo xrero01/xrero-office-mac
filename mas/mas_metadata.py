@@ -64,10 +64,11 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
     },
 }
 # the listing's order (16 Nov 2026 review): the Arabic + English document first (the app's point, and the picture search
-# results show), then the start page (the account line, beside the account pill), spreadsheet + chart, presentation,
-# PDF form + annotations
-SHOTS = {"en-US": ["mac_en_editor.png", "mac_en_start.png", "mac_en_sheet.png", "mac_en_slides.png", "mac_en_pdf.png"],
-         "ar-SA": ["mac_ar_editor.png", "mac_ar_start.png", "mac_ar_sheet.png", "mac_ar_slides.png", "mac_ar_pdf.png"]}
+# results show), then spreadsheet + chart, presentation, PDF form + annotations, and the start page last (round 4: as
+# the second picture the start page - a file list and four cards - was the set's weakest; its line still carries the
+# account, beside the account pill)
+SHOTS = {"en-US": ["mac_en_editor.png", "mac_en_sheet.png", "mac_en_slides.png", "mac_en_pdf.png", "mac_en_start.png"],
+         "ar-SA": ["mac_ar_editor.png", "mac_ar_sheet.png", "mac_ar_slides.png", "mac_ar_pdf.png", "mac_ar_start.png"]}
 
 NOTES = """XRERO OFFICE FOR MAC - APP REVIEW INFORMATION
 

@@ -64,8 +64,96 @@ def fonts(rPr, latin=LATIN, cs=ARABIC):
     rf = rPr.find(qn("w:rFonts"))
     if rf is None:
         rf = el("w:rFonts"); rPr.insert(1 if rPr.find(qn("w:rStyle")) is not None else 0, rf)
+    # (round 4) a theme font reference wins over the named face: the template's headings said "majorHAnsi" (Calibri /
+    # Cambria / Times New Roman), so the faces are named and the theme references removed
+    for a in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+        rf.attrib.pop(qn(a), None)
     for a, v in (("w:ascii", latin), ("w:hAnsi", latin), ("w:eastAsia", latin), ("w:cs", cs)):
         rf.set(qn(a), v)
+
+
+def set_val(rPr, tag, val, after):
+    """<w:tag w:val=val/> in rPr (replaced if there), in schema order"""
+    old = rPr.find(qn("w:" + tag))
+    if old is not None:
+        rPr.remove(old)
+    return put(rPr, el("w:" + tag, val=str(val)), after)
+
+
+# (round 4, store-picture review: the hero picture's style gallery showed the python-docx template's Word 2010 styles -
+# Heading 1 in #365F91, Heading 2 / 3 in #4F81BD, "No spacing" in the theme's Cambria (a serif fallback on a Mac) - while
+# the page's headings were Normal paragraphs with direct formatting). The demo documents' own styles: every style in
+# the demo faces, the headings in the demo's ink / teal, and the documents use them - the title is a Title paragraph,
+# the second line a Subtitle, the section headings Heading 1 (Word's own pattern; a 28 pt Heading 1 would also be
+# drawn clipped in the editor's style gallery, which previews each style at its own size)
+STYLES = {  # name: size pt, bold, colour, space before, space after
+    "Title": (28, True, INK, 0, 2), "Subtitle": (13, False, GREY, 0, 6),
+    "Heading 1": (16, True, TEAL, 6, 4), "Heading 2": (13, True, TEAL, 6, 3), "Heading 3": (12, True, INK, 6, 2),
+}
+
+
+def restyle(d):
+    normal = d.styles["Normal"]
+    normal.font.size = Pt(11)
+    rPr = normal.element.get_or_add_rPr()
+    fonts(rPr)
+    set_val(rPr, "szCs", 22, RPR_AFTER_SZ)
+    ns = d.styles["No Spacing"]
+    ns.font.size = Pt(11)
+    fonts(ns.element.get_or_add_rPr())
+    set_val(ns.element.get_or_add_rPr(), "szCs", 22, RPR_AFTER_SZ)
+    for name, (size, bold, color, before, after) in STYLES.items():
+        st = d.styles[name]
+        st.font.size, st.font.bold, st.font.italic = Pt(size), bold, False
+        st.font.color.rgb = color                       # (python-docx drops the theme colour with it)
+        rPr = st.element.get_or_add_rPr()
+        fonts(rPr)
+        for tag in ("bCs", "iCs", "spacing", "kern"):   # (Title: character spacing 5, kern; Subtitle: italic)
+            x = rPr.find(qn("w:" + tag))
+            if x is not None:
+                rPr.remove(x)
+        if bold:
+            put(rPr, el("w:bCs"), RPR_AFTER_B)
+        set_val(rPr, "szCs", int(size * 2), RPR_AFTER_SZ)
+        pPr = st.element.get_or_add_pPr()
+        for tag in ("pBdr", "numPr"):                   # (Title: an accent-blue rule under it; Subtitle: a list level)
+            x = pPr.find(qn("w:" + tag))
+            if x is not None:
+                pPr.remove(x)
+        st.paragraph_format.space_before, st.paragraph_format.space_after = Pt(before), Pt(after)
+
+
+STYLE_COLORS = {"365F91": INK, "243F60": INK, "17365D": INK, "1F497D": INK, "4F81BD": TEAL}
+
+
+def docx_parts(name, data):
+    """the package's parts as the demo needs them: styles without theme fonts / theme colours (the named faces and the
+    demo palette; Word reads the theme reference before the value), the Xrero theme, an app.xml without a Microsoft
+    application name"""
+    if name in ("word/styles.xml", "word/stylesWithEffects.xml"):
+        t = data.decode("utf-8")
+        t = re.sub(r'\s+w:(?:asciiTheme|hAnsiTheme|eastAsiaTheme|cstheme)="[^"]*"', "", t)
+        t = t.replace("<w:rFonts/>", '<w:rFonts w:ascii="%s" w:hAnsi="%s" w:eastAsia="%s" w:cs="%s"/>' % (
+            LATIN, LATIN, LATIN, ARABIC))
+        t = re.sub(r'\s+w:theme(?:Color|Shade|Tint|Fill|FillShade|FillTint)="[^"]*"', "", t)
+        for old, new in STYLE_COLORS.items():          # (text colours, borders and the table styles' fills)
+            t = t.replace('="%s"' % old, '="%s"' % str(new))
+        data = t.encode("utf-8")
+    return neutral_theme(name, data, LATIN, ARABIC)
+
+
+def heading(d, text, style, rtl=False, para_rtl=None):
+    """a paragraph in one of the demo's styles: size, weight, colour and face from the style, not from the run.
+    para_rtl: a right-to-left paragraph around a left-to-right run (the English file's second line)"""
+    p = d.add_paragraph(style=style)
+    if rtl if para_rtl is None else para_rtl:
+        put(p._p.get_or_add_pPr(), el("w:bidi"), ["adjustRightInd", "snapToGrid", "spacing", "ind", "jc"])
+    r = p.add_run(text)
+    rPr = r._r.get_or_add_rPr()
+    if rtl:
+        put(rPr, el("w:rtl"), RPR_AFTER_RTL)
+    put(rPr, el("w:lang", val="ar-AE" if rtl else "en-US", bidi="ar-AE"), RPR_AFTER_LANG)
+    return p
 
 
 def run(p, text, size=11, bold=False, color=None, rtl=False):
@@ -107,31 +195,25 @@ def make(path, second_line_ar):
         s.page_width, s.page_height = Cm(21.0), Cm(29.7)
         s.left_margin = s.right_margin = Cm(2.3)
         s.top_margin, s.bottom_margin = Cm(1.3), Cm(2.0)   # the whole page top fits the editor window of the pictures
-    normal = d.styles["Normal"]
-    normal.font.size = Pt(11)
-    fonts(normal.element.get_or_add_rPr())
+    restyle(d)
 
-    # Arabic title + the line under it
-    p = para(d, rtl=True, after=2)
-    run(p, "التقرير الربعي", 28, True, INK, rtl=True)
-    p = para(d, rtl=True, after=12)
+    # Arabic title (Title) + the line under it (Subtitle)
+    heading(d, "التقرير الربعي", "Title", rtl=True)
     if second_line_ar:
-        run(p, "الربع الثالث 2026  ·  الإمارات العربية المتحدة", 13, False, GREY, rtl=True)
+        heading(d, "الربع الثالث 2026  ·  الإمارات العربية المتحدة", "Subtitle", rtl=True)
     else:
         # (English words only from the spelling dictionary: the editor underlines Latin-script city names it does not
         # know, and it does not read w:noProof - the cities are named in the Arabic text)
-        run(p, "Quarterly Report  ·  Q3 2026  ·  United Arab Emirates", 13, False, GREY)
+        heading(d, "Quarterly Report  ·  Q3 2026  ·  United Arab Emirates", "Subtitle", para_rtl=True)
 
     # Arabic summary (the pictures put the caret in this paragraph)
+    heading(d, "ملخص الربع الثالث", "Heading 1", rtl=True)
     p = para(d, rtl=True, after=4)
-    run(p, "ملخص الربع الثالث", 18, True, TEAL, rtl=True)
-    p = para(d, rtl=True, after=10)
     p.paragraph_format.line_spacing = 1.15
     run(p, SUMMARY, 14, rtl=True)
 
     # Arabic numbered list (right to left, the editor's own numbering)
-    p = para(d, rtl=True, after=4)
-    run(p, "أبرز النتائج", 16, True, TEAL, rtl=True)
+    heading(d, "أبرز النتائج", "Heading 1", rtl=True)
     for t in ("افتتاح مكتب جديد في الشارقة",
               "تسليم 29 مشروعًا في ثلاث إمارات",
               "قالب واحد للمستندات العربية والإنجليزية"):
@@ -139,8 +221,7 @@ def make(path, second_line_ar):
         run(p, t, 14, rtl=True)
 
     # English list (left to right): the same report in its second language
-    p = para(d, before=8, after=4)
-    run(p, "Highlights", 14, True, TEAL)
+    heading(d, "Highlights", "Heading 1")
     for t in ("29 projects delivered across three emirates",          # (two: the list ends inside the picture)
               "One bilingual template for Arabic and English documents"):
         p = para(d, after=2, style="List Bullet")
@@ -149,7 +230,27 @@ def make(path, second_line_ar):
     cp = d.core_properties
     cp.title, cp.author, cp.last_modified_by, cp.comments, cp.subject, cp.keywords = "التقرير الربعي", "Xrero", "Xrero", "", "", ""
     d.save(path)
+    repack(path, docx_parts)
+    check_docx(path)
     print("wrote", path)
+
+
+def check_docx(path, heads=("Title", "Heading1")):
+    """(round 4) the package keeps no Word 2010 theme blue, no theme font reference and no Microsoft application name in
+    its styles / theme / app.xml, and every heading of the document is a style paragraph"""
+    z = zipfile.ZipFile(path)
+    st = z.read("word/styles.xml").decode("utf-8")
+    bad = [x for x in ("365F91", "4F81BD", "17365D", "Theme=", "cstheme=", "Cambria", "Calibri") if x in st]
+    th = z.read("word/theme/theme1.xml").decode("utf-8")
+    bad += ["theme " + x for x in ("Cambria", "Calibri", "4F81BD", 'name="Office') if x in th]
+    app = z.read("docProps/app.xml").decode("utf-8")
+    bad += ["app.xml " + x for x in ("Microsoft", "Normal.dotm") if x in app]
+    doc = z.read("word/document.xml").decode("utf-8")
+    styles = re.findall(r'<w:pStyle w:val="([^"]+)"/>', doc)
+    if not set(heads) <= set(styles):
+        bad.append("no %s paragraphs: %s" % (" / ".join(heads), styles))
+    if bad:
+        raise SystemExit("%s: %s" % (path, bad))
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -179,7 +280,7 @@ APP_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Properties
 def neutral_theme(name, data, latin, cs):
     if name == "docProps/app.xml":           # (the generators' templates name a Microsoft application here)
         return APP_XML.encode("utf-8")
-    if not re.match(r"(ppt|xl)/theme/theme\d+\.xml$", name):
+    if not re.match(r"(ppt|xl|word)/theme/theme\d+\.xml$", name):
         return data
     t = data.decode("utf-8")
     t = re.sub(r'(<a:(?:theme|clrScheme|fontScheme|fmtScheme)\b[^>]*?\bname=")[^"]*(")', r"\g<1>Xrero\2", t)
@@ -600,27 +701,34 @@ def make_pdf(path, lang, font_dir):
     put(R(50, 19, 545, 50), c["title"], 21, "FFFFFF", True)
     put(R(50, 52, 545, 74), c["sub"], 10.5, "C7E6EC")
     put(R(50, 98, 545, 120), c["h1"], 12.5, "0585A1", True); rule(123)
-    rows = ((134, 0, 1), (168, 2, 3))
+    # (round 4: the pen circle around the date field was tight and tilted - the field's corners poked out of it and its
+    # far end nearly touched the next label, because the rows were 10 pt apart and the next column 15 pt away). The
+    # fields are 142 pt wide, the second column starts at 319 and the second row 26 pt under the first, so a level
+    # circle 20 pt clear of the date field on its sides fits between the rows and before the next column's label;
+    # everything under the rows is D lower
+    rows = ((134, 0, 1), (184, 2, 3))
+    D = 30
     fields = {}
     for y, a, b in rows:
         for col, i in ((0, a), (1, b)):
-            x = 50 if col == 0 else 305
+            x = 50 if col == 0 else 319
             put(R(x, y + 3, x + 80, y + 24), c["labels"][i], 10.5, "3D4B50")
-            fields[PDF_FIELDS[i]] = R(x + 84, y, x + 240, y + 24)
-    put(R(50, 204, 545, 226), c["h2"], 12.5, "0585A1", True); rule(229)
+            fields[PDF_FIELDS[i]] = R(x + 84, y, x + 226, y + 24)
+    put(R(50, 204 + D, 545, 226 + D), c["h2"], 12.5, "0585A1", True); rule(229 + D)
     for i, x in enumerate((50, 215, 380)):
-        fields[PDF_FIELDS[4 + i]] = R(x, 241, x + 14, 255)
-        put(R(x + 21, 239, x + 160, 260), c["boxes"][i], 10.5, "3D4B50")
-    put(R(50, 270, 545, 292), c["h3"], 12.5, "0585A1", True); rule(295)
-    fields["notes"] = R(50, 303, 545, 343)
-    note = R(50, 350, 545, 368)
+        fields[PDF_FIELDS[4 + i]] = R(x, 241 + D, x + 14, 255 + D)
+        put(R(x + 21, 239 + D, x + 160, 260 + D), c["boxes"][i], 10.5, "3D4B50")
+    put(R(50, 270 + D, 545, 292 + D), c["h3"], 12.5, "0585A1", True); rule(295 + D)
+    fields["notes"] = R(50, 303 + D, 545, 343 + D)
+    # the line right under the Notes field (store_capture.py pdf_marks finds it there and highlights it in the app)
+    note = R(50, 350 + D, 545, 368 + D)
     put(note, c["note"], 10, "5B6B70")          # (the capture highlights this line in the app)
     # "For office use" at the foot of the page (round 3: at y 398 the picture's window edge cut the page right under
     # its heading; now the edge runs through blank page under the deadline line)
     put(R(50, 700, 545, 722), c["h4"], 12.5, "0585A1", True); rule(725)
-    for x, t in ((50, c["office"][0]), (305, c["office"][1])):
+    for x, t in ((50, c["office"][0]), (319, c["office"][1])):     # (the same two columns as the fields)
         put(R(x, 740, x + 80, 761), t, 10.5, "3D4B50")
-        r = R(x + 84, 758, x + 240, 758.5)
+        r = R(x + 84, 758, x + 226, 758.5)
         pg.draw_line((r.x0, 758), (r.x1, 758), color=(0.6, 0.68, 0.7), width=0.7)
 
     for name in PDF_FIELDS:
@@ -701,8 +809,8 @@ def make_extras(lang, suf):
     for s in d.sections:
         s.page_width, s.page_height = Cm(21.0), Cm(29.7)
         s.left_margin = s.right_margin = Cm(2.3)
-    fonts(d.styles["Normal"].element.get_or_add_rPr())
-    run(para(d, rtl=rtl, after=8), title, 24, True, INK, rtl=rtl)
+    restyle(d)                                   # (round 4) the same styles as the report: the title is a Title
+    heading(d, title, "Title", rtl=rtl)
     run(para(d, rtl=rtl, after=8), intro, 12, rtl=rtl)
     for t in items:
         run(para(d, rtl=rtl, after=3, style="List Bullet"), t, 12, rtl=rtl)
@@ -710,6 +818,8 @@ def make_extras(lang, suf):
     cp.title, cp.author, cp.last_modified_by, cp.comments, cp.subject, cp.keywords = title, "Xrero", "Xrero", "", "", ""
     p = os.path.join(OUT, "store_extra_guide%s.docx" % suf)
     d.save(p)
+    repack(p, docx_parts)
+    check_docx(p, heads=("Title",))
     print("wrote", p)
     # 2. the training plan (.xlsx)
     title, head, rows = c["training"]

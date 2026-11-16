@@ -345,20 +345,31 @@ async def page_shot_2x(pg, name, rest=None, caret=False):
     if rest:
         await pg.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": rest[0], "y": rest[1]})
         await asyncio.sleep(0.8)
-    held = await pg.ev(CARET_JS.replace("__HOLD__", "true")) if caret else None
+    held = (await pg.ev(caret_js("hold", name)) or {}) if caret else {}
     dpr = await pg.ev("devicePixelRatio")
     hover = await pg.ev(HOVER_JS)
     r = await pg.call("Page.captureScreenshot", {"format": "png"})
+    proof = None
     if caret:
-        await pg.ev(CARET_JS.replace("__HOLD__", "false"))
+        # (round 4b) the proof: the same page with the caret hidden; the picture must differ from it in the caret's box
+        held["off"] = (await pg.ev(caret_js("off", name)) or {}).get("caret")
+        await asyncio.sleep(0.3)
+        proof = await pg.call("Page.captureScreenshot", {"format": "png"})
+        await pg.ev(caret_js("release", name))
     await pg.call("Emulation.clearDeviceMetricsOverride")
     await asyncio.sleep(2)
     if r.get("result", {}).get("data"):
         p = os.path.join(OUT, "%s-%s-page2x.png" % (LANG, name))
-        open(p, "wb").write(base64.b64decode(r["result"]["data"]))
+        on = base64.b64decode(r["result"]["data"])
+        open(p, "wb").write(on)
+        if caret and (proof or {}).get("result", {}).get("data") and isinstance(held.get("rect"), list):
+            off = base64.b64decode(proof["result"]["data"])
+            open(os.path.join(OUT, "%s-%s-page2x-nocaret.png" % (LANG, name)), "wb").write(off)
+            held["drawn"] = caret_drawn(on, off, held["rect"])
         res["shots"].append({"name": name, "page2x": os.path.basename(p), "viewport": vw[:2], "dpr_then": dpr,
-                             "caret": held, "hover": hover})
-        log("page 2x", name, vw, "dpr", dpr, "caret", held, "hover", hover)
+                             "caret": held.get("caret") if caret else None, "caret_info": held if caret else None,
+                             "hover": hover})
+        log("page 2x", name, vw, "dpr", dpr, "caret", json.dumps(held, ensure_ascii=False), "hover", hover)
 
 
 def make_doc(name, src):
@@ -446,7 +457,8 @@ SLIDE_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
   }catch(e){o.err=''+e;}o.font=fontbox();o.statusbar=statusbar();return o;})()"""
 
 # (round 4, gallery-size legibility: the hero picture's page text was about 7 pt at the store's product-page size) the
-# document picture at the editor's own 120 % zoom, the report's whole text block in view: zoom (sdkjs api.zoom), then
+# document picture at the editor's own 140 % zoom (round 4: 120 %; round 4b: the report's sizes are 6/7 of round 4's, so
+# the Heading 1 name fits the style gallery - store_demo.py STYLES), the report's whole text block in view: zoom (sdkjs api.zoom), then
 # the view scrolled so the title is near its top (the editor's vertical scroll bar), then measured - the first and
 # last paragraphs' tops / bottoms against the view (page coordinates of the editor canvas, CSS px)
 EDITOR_VIEW_JS = r"""(function(op,arg){""" + FRAME + r"""var o={};
@@ -467,7 +479,7 @@ async def editor_view(pg, op="measure", arg=0):
     return await pg.ev(EDITOR_VIEW_JS.replace("__OP__", json.dumps(op)).replace("__ARG__", json.dumps(arg))) or {}
 
 
-async def editor_zoom(pg, zoom=120, margin=26):
+async def editor_zoom(pg, zoom=140, margin=26):
     """the document picture's zoom and scroll (see EDITOR_VIEW_JS); back to 100 % if the text block does not fit"""
     steps = [await editor_view(pg, "zoom", zoom)]
     await asyncio.sleep(2.5)
@@ -591,18 +603,74 @@ PDF_ANNOTS_JS = r"""(function(){""" + FRAME + r"""try{return api.getPDFDoc().ann
   }catch(e){return 'error: '+e;}})()"""
 HIGHLIGHT, TEXT_NOTE, INK = 8, 0, 14          # AscPDF.ANNOTATIONS_TYPES (sdkjs pdf/src/defines.js)
 
-# the caret: its blink timer paused and the caret shown for a capture (hold), then the timer started again (release);
-# only where the editor wants a caret (NeedTarget) - the caret the picture shows is the editor's own, at its place
-CARET_JS = r"""(function(hold){""" + FRAME + r"""var dd=null;
+# the caret: kept shown for a capture (hold), hidden for the proof capture (off), then the editor's own blink again
+# (release); only where the editor wants a caret (NeedTarget) - the caret the picture shows is the editor's own, at its
+# place. Round 4b (run 35): the Arabic document picture and both PDF pictures had NO caret in their 2x capture (the 1x
+# window captures had it), although the hold said "held: block/visible". Stopping the blink timer was not enough: when
+# the editor shows its caret after a redraw (CheckTargetShow) and finds no timer, it starts one again (TargetStart), and
+# the 2x capture's device-scale change redraws the whole editor - after round 4's zoom / scroll (document) and click
+# (PDF Notes) the caret blinked off again before the capture. Now the blink function itself is swapped for one that
+# keeps the caret shown (a timer takes oThis.DrawTarget when it starts), the caret is put again at its own place for the
+# current zoom, scroll and scale (UpdateTargetNoAttack - what the editor does after a scroll), and page_shot_2x proves
+# it is in the picture: the same page captured with the caret hidden must differ inside the caret's box.
+CARET_JS = r"""(function(op,tag){""" + FRAME + r"""var dd=null;
   try{dd=(api.WordControl&&api.WordControl.m_oDrawingDocument)||null;}catch(e){}
   try{if((!dd||!dd.TargetHtmlElement)&&api.getPDFDoc)dd=api.getPDFDoc().GetDrawingDocument();}catch(e){}
-  if(!dd||!dd.TargetHtmlElement)return 'no caret';
-  if(hold){if(!dd.NeedTarget)return 'no caret wanted';
-    if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;dd.__xrHeld=1;}
-    if(dd.showTarget)dd.showTarget(true);else dd.TargetHtmlElement.style.display='block';
-    var cs=w.getComputedStyle(dd.TargetHtmlElement),r=dd.TargetHtmlElement.getBoundingClientRect();
-    return 'held: '+cs.display+'/'+cs.visibility+' '+Math.round(r.width)+'x'+Math.round(r.height);}
-  if(dd.__xrHeld){dd.__xrHeld=0;if(dd.TargetStart)dd.TargetStart(true);}return 'released';})(__HOLD__)"""
+  if(!dd||!dd.TargetHtmlElement)return {caret:'no caret'};
+  var el=dd.TargetHtmlElement;
+  function show(v){if(dd.showTarget)dd.showTarget(v);else el.style.display=v?'block':'none';}
+  function box(r){return [r.left+fr.left,r.top+fr.top,r.right+fr.left,r.bottom+fr.top].map(function(v){return Math.round(v*10)/10;});}
+  if(op==='release'){if(!dd.__xrDT)return {caret:'released'};
+    dd.DrawTarget=dd.__xrDT;dd.__xrDT=null;var run=dd.m_lTimerTargetId!=-1;
+    if(run){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
+    if((run||dd.__xrRun)&&dd.TargetStart)dd.TargetStart(true);return {caret:'released'};}
+  if(op==='off'){if(!dd.__xrDT){dd.__xrDT=dd.DrawTarget;dd.__xrRun=dd.m_lTimerTargetId!=-1;}
+    dd.DrawTarget=function(){show(false);};
+    if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
+    show(false);var c0=w.getComputedStyle(el);return {caret:'off: '+c0.display+'/'+c0.visibility};}
+  if(!dd.NeedTarget)return {caret:'no caret wanted'};
+  if(!dd.__xrDT){dd.__xrDT=dd.DrawTarget;dd.__xrRun=dd.m_lTimerTargetId!=-1;}
+  dd.DrawTarget=function(){show(true);};
+  if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=setInterval(dd.DrawTarget,500);}
+  var o={};try{if(dd.UpdateTargetNoAttack){dd.UpdateTargetNoAttack();o.placed=true;}}catch(e){o.placed='error: '+e;}
+  show(true);
+  var cs=w.getComputedStyle(el),r=el.getBoundingClientRect();
+  o.caret='held: '+cs.display+'/'+cs.visibility+' '+Math.round(r.width)+'x'+Math.round(r.height);o.rect=box(r);
+  // (document picture) where the caret belongs: its paragraph's box on the page, through the editor's own page ->
+  // canvas conversion (the caret element and the page canvas share one parent, id_main_view)
+  if(tag==='editor')try{var ld=api.WordControl.m_oLogicDocument,p=ld.GetCurrentParagraph(),b=p.Pages[0].Bounds;
+    var n=p.GetAbsolutePage?p.GetAbsolutePage(0):p.Get_AbsolutePage(0),cv=api.WordControl.m_oEditor.HtmlElement.getBoundingClientRect();
+    var a=dd.ConvertCoordsToCursor4(b.Left,b.Top,n,true),z=dd.ConvertCoordsToCursor4(b.Right,b.Bottom,n,true);
+    o.where=box({left:cv.left+a.X,top:cv.top+a.Y,right:cv.left+z.X,bottom:cv.top+z.Y});
+    o.para=(p.GetText?p.GetText():'').replace(/^\s+/,'').slice(0,6);}catch(e){o.where='error: '+e;}
+  return o;})(__OP__,__TAG__)"""
+
+
+def caret_js(op, tag=""):
+    """CARET_JS for one step: hold | off | release"""
+    return CARET_JS.replace("__OP__", json.dumps(op)).replace("__TAG__", json.dumps(tag))
+
+
+def caret_drawn(on_png, off_png, rect, scale=2):
+    """(round 4b) how much the page changes inside the caret's box between the capture with the caret and the one
+    without it: mean luminance difference 0-255 (a dark caret on white paper ~ 200; no caret drawn = 0)"""
+    try:
+        try:
+            import pymupdf
+        except ImportError:
+            import fitz as pymupdf
+        a, b = pymupdf.Pixmap(on_png), pymupdf.Pixmap(off_png)
+        x0, y0, x1, y1 = [int(round(v * scale)) for v in rect]
+        xs, ys = range(max(0, x0), min(a.width, x1)), range(max(0, y0 + 2), min(a.height, y1 - 2))
+        if not len(xs) or not len(ys):
+            return "outside the picture: %s" % rect
+
+        def lum(px):
+            return 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2]
+        d = [abs(lum(a.pixel(x, y)) - lum(b.pixel(x, y))) for y in ys for x in xs]
+        return round(sum(d) / len(d), 1)
+    except Exception as e:
+        return "not measured: %s: %s" % (type(e).__name__, e)
 
 # what is in its hover state in the tab's page and editor frame (cards, Recent rows, ribbon buttons, tabs)
 HOVER_JS = r"""(function(){var out=[];[document].concat((function(){var f=document.querySelector('iframe[name=frameEditor]');
@@ -1215,10 +1283,10 @@ async def main():
                     if tag == "pdf":                # (round 4) saved, caret in Notes, at the moment of the pictures
                         res["pdf_at_capture"] = await pg.ev(PDF_SAVED_JS)
                     if caret:
-                        await pg.ev(CARET_JS.replace("__HOLD__", "true"))
+                        await pg.ev(caret_js("hold", tag))
                     screen_shot(tag, box)
                     if caret:
-                        await pg.ev(CARET_JS.replace("__HOLD__", "false"))
+                        await pg.ev(caret_js("release", tag))
                     res["titlebar_" + tag] = titlebar()
                     log("title bar (%s):" % tag, json.dumps(res["titlebar_" + tag], ensure_ascii=False)[:1500])
                     await page_shot_2x(pg, tag, rest=rest, caret=caret)
@@ -1299,12 +1367,13 @@ if MODE == "shots":
     for tag, m in (res.get("more_final") or {}).items():
         if not m or m.get("more") is not False:
             bad.append("%s picture: ribbon groups folded into More (window %s): %s" % (tag, res.get("picture_window"), m))
-    # (round 4) the document picture: the report's whole text block in view (at 120 %, else 100 %)
+    # (round 4) the document picture: the report's whole text block in view (round 4b: at 140 %, the report set 6/7 of
+    # its round-4 sizes - store_demo.py STYLES; at 100 % it would be small, so that is now an error, not a note)
     ez = res.get("editor_zoom") or {}
     if not ez.get("fits"):
         bad.append("document picture: the text block is not all in view: %s" % json.dumps(ez.get("final"))[:300])
-    elif (ez.get("final") or {}).get("zoom") != 120:
-        print("note: the document picture is at %s %%, not 120 %%" % (ez.get("final") or {}).get("zoom"))
+    elif (ez.get("final") or {}).get("zoom") != 140:
+        bad.append("document picture at %s %%, not 140 %%" % (ez.get("final") or {}).get("zoom"))
     if not str((res.get("editor_info") or {}).get("caret", "")).startswith("summary"):
         bad.append("caret not in the Arabic summary: %s" % (res.get("editor_info") or {}).get("caret"))
     # the five-picture set (16 Nov 2026): every editor picture taken, ready, no tips / dialogs, nothing private
@@ -1317,6 +1386,27 @@ if MODE == "shots":
             bad.append("%s picture: hover state on %s" % (x.get("name"), x.get("hover")))
         if x.get("page2x") and x.get("name") in ("editor", "slide", "pdf") and not str(x.get("caret", "")).startswith("held"):
             bad.append("%s picture: caret not shown (%s)" % (x.get("name"), x.get("caret")))
+        # (round 4b, run 35: "held" but not in three of the six 2x pictures) the caret is IN the picture: the page with the
+        # caret hidden differs inside its box, and it sits where it belongs (the document's Arabic summary paragraph, the
+        # PDF's Notes field)
+        ci = x.get("caret_info") or {}
+        if x.get("page2x") and x.get("name") in ("editor", "slide", "pdf"):
+            dr = ci.get("drawn")
+            if not isinstance(dr, (int, float)) or dr < 40:
+                bad.append("%s picture: the caret is not drawn in the 2x capture (change in its box %s, %s)" % (
+                    x.get("name"), dr, json.dumps(ci, ensure_ascii=False)[:300]))
+            rc = ci.get("rect") if isinstance(ci.get("rect"), list) else None
+            want = None
+            if x.get("name") == "editor":
+                want = ci.get("where") if isinstance(ci.get("where"), list) else None
+                if ci.get("para") != "\u064a\u0633\u062a\u0639\u0631\u0636":
+                    bad.append("document picture: the caret's paragraph %r is not the Arabic summary" % ci.get("para"))
+            elif x.get("name") == "pdf":
+                want = (res.get("pdf_at_capture") or {}).get("notes_px")
+            if x.get("name") in ("editor", "pdf"):
+                cx, cy = ((rc[0] + rc[2]) / 2, (rc[1] + rc[3]) / 2) if rc else (None, None)
+                if not (rc and want and want[0] - 4 <= cx <= want[2] + 4 and want[1] - 4 <= cy <= want[3] + 4):
+                    bad.append("%s picture: the caret %s is not inside %s" % (x.get("name"), rc, want))
     for tag, st in (res.get("ready") or {}).items():
         if st != "ok":
             bad.append("%s editor not ready: %s" % (tag, st))

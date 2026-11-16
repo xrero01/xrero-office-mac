@@ -17,7 +17,7 @@ The neutral sample documents the Mac App Store pictures show (mas/store_capture.
 All of them: one neutral UAE story (three offices, 29 projects delivered in Q3 - the report's own numbers), counts and
 dates only - no money amounts, no people's names, no e-mail addresses.
 16 Nov 2026 (store-picture review): the picture's headline is "Arabic and English in one document" (it was "Real
-Arabic, right to left"), so Arabic leads the page in both: an Arabic title (28 pt) and summary (14 pt), an Arabic numbered list, then a short English list - the
+Arabic, right to left"), so Arabic leads the page in both: an Arabic title (24 pt) and summary (12 pt), an Arabic numbered list, then a short English list - the
 bilingual part. The second line is English in the English file and Arabic in the Arabic one. All of it is laid out
 right to left by the editor itself (bidi paragraphs, bidi numbering) - no right-to-left table: the editor engine draws
 every table left to right (it has no w:bidiVisual), so a table would only look right-to-left by storing its columns
@@ -84,12 +84,17 @@ def set_val(rPr, tag, val, after):
 # Heading 1 in #365F91, Heading 2 / 3 in #4F81BD, "No spacing" in the theme's Cambria (a serif fallback on a Mac) - while
 # the page's headings were Normal paragraphs with direct formatting). The demo documents' own styles: every style in
 # the demo faces, the headings in the demo's ink / teal, and the documents use them - the title is a Title paragraph,
-# the second line a Subtitle, the section headings Heading 1 (Word's own pattern; a 28 pt Heading 1 would also be
-# drawn clipped in the editor's style gallery, which previews each style at its own size)
+# the second line a Subtitle, the section headings Heading 1 (Word's own pattern).
+# Round 4b (run 35): the editor's style gallery draws each style's name at the style's own size in a 104 px tile and cuts
+# what runs past 99 px (sdkjs stylespainter.js: the name from 10 px, clip at width - 5): Heading 1 at 16 pt showed
+# "Heading" without its "1" in the English hero picture. So Heading 1 is 13.5 pt ("Heading 1" ~85 px in Helvetica Neue
+# Bold) and the whole report is set 6/7 of its round-4 sizes (title 24, summary and list 12, English 10); the picture
+# shows it at the editor's 140 % zoom (store_capture.py editor_zoom), the same size on screen as 120 % before
 STYLES = {  # name: size pt, bold, colour, space before, space after
-    "Title": (28, True, INK, 0, 2), "Subtitle": (13, False, GREY, 0, 6),
-    "Heading 1": (16, True, TEAL, 6, 4), "Heading 2": (13, True, TEAL, 6, 3), "Heading 3": (12, True, INK, 6, 2),
+    "Title": (24, True, INK, 0, 2), "Subtitle": (11, False, GREY, 0, 5),
+    "Heading 1": (13.5, True, TEAL, 5, 3.5), "Heading 2": (12, True, TEAL, 5, 2.5), "Heading 3": (11, True, INK, 5, 2),
 }
+assert STYLES["Heading 1"][0] <= 13.5        # (the gallery tile above)
 
 
 def restyle(d):
@@ -208,24 +213,24 @@ def make(path, second_line_ar):
 
     # Arabic summary (the pictures put the caret in this paragraph)
     heading(d, "ملخص الربع الثالث", "Heading 1", rtl=True)
-    p = para(d, rtl=True, after=4)
+    p = para(d, rtl=True, after=3.5)
     p.paragraph_format.line_spacing = 1.15
-    run(p, SUMMARY, 14, rtl=True)
+    run(p, SUMMARY, 12, rtl=True)
 
     # Arabic numbered list (right to left, the editor's own numbering)
     heading(d, "أبرز النتائج", "Heading 1", rtl=True)
     for t in ("افتتاح مكتب جديد في الشارقة",
               "تسليم 29 مشروعًا في ثلاث إمارات",
               "قالب واحد للمستندات العربية والإنجليزية"):
-        p = para(d, rtl=True, after=3, style="List Number")
-        run(p, t, 14, rtl=True)
+        p = para(d, rtl=True, after=2.5, style="List Number")
+        run(p, t, 12, rtl=True)
 
     # English list (left to right): the same report in its second language
     heading(d, "Highlights", "Heading 1")
     for t in ("29 projects delivered across three emirates",          # (two: the list ends inside the picture)
               "One bilingual template for Arabic and English documents"):
         p = para(d, after=2, style="List Bullet")
-        run(p, t, 11.5)
+        run(p, t, 10)
 
     cp = d.core_properties
     cp.title, cp.author, cp.last_modified_by, cp.comments, cp.subject, cp.keywords = "التقرير الربعي", "Xrero", "Xrero", "", "", ""

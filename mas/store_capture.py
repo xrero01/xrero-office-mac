@@ -483,7 +483,17 @@ HEADER_JS = r"""(function(){""" + FRAME + r"""var o={};
     o.title_cx=Math.round(fr.left+r.left+r.width/2);o.page_cx=Math.round(window.innerWidth/2);o.title_dx=o.title_cx-o.page_cx;
     o.title_w=Math.round(r.width);o.pad=[b.paddingLeft,b.paddingRight];}
   var a=d.querySelector('.ribtab.active');
-  if(a){var s=w.getComputedStyle(a,'::after');o.tab=(a.innerText||'').trim();o.underline=s.borderTopColor;o.underline_opacity=s.opacity;}
+  if(a){var s=w.getComputedStyle(a,'::after');o.tab=(a.innerText||'').trim();o.underline=s.borderTopColor;o.underline_opacity=s.opacity;
+    // (run 32 diagnosis) where the underline colour comes from: the theme classes, the variables on the body and on
+    // the tab, the stylesheets the page added at run time that name them
+    var k=['document','spreadsheet','presentation','pdf'].map(function(e){return '--highlight-toolbar-tab-underline-'+e;});
+    o.classes=[d.documentElement.className,d.body.className].join(' | ').slice(0,200);
+    o.vars_body=k.map(function(v){return w.getComputedStyle(d.body).getPropertyValue(v).trim();});
+    o.vars_tab=k.map(function(v){return w.getComputedStyle(a).getPropertyValue(v).trim();});
+    o.styles=[].slice.call(d.querySelectorAll('style')).map(function(e){return (e.id||'')+':'+(e.textContent||'').length+':'+
+      ((e.textContent||'').match(/[^{}]{0,80}\{[^}]*tab-underline[^}]{0,80}/)||[''])[0].slice(0,220);}).filter(function(x){return /underline/.test(x);});
+    o.xr_tabline=[].slice.call(d.styleSheets).some(function(ss){try{return [].slice.call(ss.cssRules).some(function(r){
+      return /XR|li:after/.test(r.cssText)&&/#fff|255, 255, 255/.test(r.cssText)&&/tab/.test(r.cssText);});}catch(e){return false;}});}
   return o;})()"""
 # (round 3) the presentation editor's red Present button in the status bar: the gap between its label and the split
 # divider (the label touched it) and the drop-down chevron's colour (half dark on red) - patch_bundle.py XR-PRESENT
@@ -612,12 +622,17 @@ def pdf_marks():
     ring = [(cx + rx * (1 + 0.03 * math.sin(3 * t)) * math.cos(t), cy + ry * (1 + 0.05 * math.cos(2 * t)) * math.sin(t))
             for t in [-2.7 + k * (2 * math.pi + 0.5) / 60 for k in range(61)]]
     y = (box.y0 + box.y1) / 2
-    # the drag ends 3 pt past the line's end (round 3: ending 0.4 pt inside the last word left its full stop out of the
-    # highlight in both languages - "meeting|." / "الأقل|.")
-    a, b = (box.x1 - 0.4, box.x0 - 3) if rtl else (box.x0 + 0.4, box.x1 + 3)
-    line = [(a + (b - a) * k / 16.0, y) for k in range(17)]
+    # the drag ends past the line's end (round 3: ending 0.4 pt inside the last word left its full stop out of the
+    # highlight in both languages - "meeting|." / "الأقل|."). Run 32: 3 pt past the end took the English full stop but
+    # not the Arabic one, so the Arabic drag goes 15 pt past; and if the selection still lacks the full stop the drag is
+    # made again the way a user would retry it (further past, then from the other end) - prep_marks
+    if rtl:
+        tries = [(box.x1 - 0.4, box.x0 - 15), (box.x1 - 0.4, box.x0 - 40), (box.x0 - 15, box.x1 + 15)]
+    else:
+        tries = [(box.x0 + 0.4, box.x1 + 3), (box.x0 + 0.4, box.x1 + 15), (box.x1 + 15, box.x0 - 15)]
+    lines = [[(a + (b - a) * k / 16.0, y) for k in range(17)] for a, b in tries]
     note = (dr.x1 + 12, dr.y0 + 2) if rtl else (dr.x0 - 32, dr.y0 + 2)
-    return {"line": line, "ring": ring, "note": note, "box": [round(v, 1) for v in box], "date": [round(v, 1) for v in dr]}
+    return {"lines": lines, "ring": ring, "note": note, "box": [round(v, 1) for v in box], "date": [round(v, 1) for v in dr]}
 
 
 async def ctrl(pg, sel):
@@ -640,10 +655,17 @@ async def prep_marks(pg, pre):
     def P(x, y):
         return (org[0] + x * sc, org[1] + y * sc)
     o["marks"] = {"box": m["box"], "date": m["date"], "note": m["note"]}
-    # 1. highlight: select the line with the mouse (the Select tool), then the Highlight button
-    await pg.drag([P(*q) for q in m["line"]])
-    await asyncio.sleep(1.2)
-    o["selection"] = await pg.ev(PDF_SEL_JS)
+    # 1. highlight: select the line with the mouse (the Select tool), then the Highlight button. The line's only full
+    # stop is its last letter: while the selection lacks it, the line is selected again (pdf_marks: further past the
+    # end, then from the other end), as a user does on seeing a selection fall short
+    o["selection_tries"] = []
+    for line in m["lines"]:
+        await pg.drag([P(*q) for q in line])
+        await asyncio.sleep(1.2)
+        o["selection"] = await pg.ev(PDF_SEL_JS)
+        o["selection_tries"].append((o["selection"] or {}).get("text", "")[-24:])
+        if "." in str((o["selection"] or {}).get("text", "")):
+            break
     b = await ctrl(pg, "#id-toolbar-btn-highlight")
     o["highlight_button"] = b
     if b:

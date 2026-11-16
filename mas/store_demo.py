@@ -479,12 +479,13 @@ def make_slides(path, lang):
         shape(s1, *args)
     shape(s1, MSO_SHAPE.OVAL, 10.65, 0.55, 1.45, 1.45, None, None, light, 2.25)
     # (round 3) the block 0.5 in higher than before: the title, the same title in the other language, the rule, the line
-    shape(s1, MSO_SHAPE.RECTANGLE, 0.95, 4.02, 1.25, 0.08, light)
+    # (run 32: the second title 3.12 in down sat right under the title's selection frame in the picture - 3.26 in)
+    shape(s1, MSO_SHAPE.RECTANGLE, 0.95, 4.16, 1.25, 0.08, light)
     text(place(s1.shapes.title, 0.95, 1.55, 6.9, 1.55, MSO_ANCHOR.BOTTOM, inset=0.3), [c["title"]], 54, C.from_string("FFFFFF"), True)
-    tb = s1.shapes.add_textbox(X(0.95, 6.9), Inches(3.12), Inches(6.9), Inches(0.72))
+    tb = s1.shapes.add_textbox(X(0.95, 6.9), Inches(3.26), Inches(6.9), Inches(0.72))
     tb.text_frame.margin_left = tb.text_frame.margin_right = 0
     text(tb.text_frame, [c["other"]], 30, light, prtl=c["other_rtl"], face=c["other_font"])
-    text(place(s1.placeholders[1], 0.95, 4.28, 6.9, 0.9), [c["sub"]], 22, C.from_string("C7E6EC"))
+    text(place(s1.placeholders[1], 0.95, 4.42, 6.9, 0.9), [c["sub"]], 22, C.from_string("C7E6EC"))
 
     # 2 - the branch-office slide
     s2 = prs.slides.add_slide(prs.slide_layouts[5])

@@ -372,9 +372,14 @@ TEAL = "#0585A1"
 # spreadsheets, #B75B44 presentations, #AA5252 PDF) - on the one teal the documents and spreadsheet underlines all but
 # disappeared, so no tab looked active. White, like the tab names, in all four (XR-TABLINE; only the tab underline
 # uses these variables: web-apps toolbar.less .tab-toolbar-color)
+# Run 32 measured the variables' own colours on the Mac even with them set !important on .theme-white (the same file
+# and selector as the teal header, and white in Chrome with this stylesheet alone): something the Mac app adds at run
+# time sets them closer to the tabs. So the underline itself is white too, under the same theme (where the header is
+# teal: XR-HEADER above), for the line and for its hover preview.
 TABLINE = ("/*XR-TABLINE*/.theme-white{" + "".join("--highlight-toolbar-tab-underline-%s:#fff!important;" % k for k in
                                                      ("document", "spreadsheet", "presentation", "pdf", "visio")) +
-           "}/*XR-TABLINE-END*/")
+           "}.theme-white .toolbar .tabs li:after,.theme-white .toolbar .tabs li.ribtab:after,"
+           ".theme-white .toolbar.editor-native-color .tabs li:after{border-top-color:#fff!important}/*XR-TABLINE-END*/")
 n_hdr = n_line = 0
 for css in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "resources", "css", "app.css")):
     t = open(css, encoding="utf-8", errors="surrogateescape").read()

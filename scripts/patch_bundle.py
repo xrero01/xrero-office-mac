@@ -593,101 +593,6 @@ MAC_JS = r"""
       } else if (++n > 2400) clearInterval(t);
     }, 25);
   })();
-  // XR-FIELD-AP (16 Nov 2026, APP-BACKLOG 18): Arabic typed into a PDF form field whose font is EMBEDDED in the PDF
-  // (/DR - many real Arabic forms, and the Windows store demo's /Dubai) looked right while typing but was saved as
-  // separate, overlapping letters, in the app after reopening and in every other PDF reader. On Save the editor draws
-  // each changed field's appearance (sdkjs CBaseField.WriteRenderToBinary) with its shaped glyphs - glyph id + code
-  // points (CDocumentRenderer.tg) - and the converter writes them into the PDF. For a font embedded in the PDF the
-  // converter takes the glyph by its FIRST CODE POINT, not by the glyph id (core PdfWriter CFontEmbedded::EncodeUnicode
-  // looks the code point up in the font's ToUnicode first), so every Arabic letter got its isolated form at the place
-  // of its joined form; lam-alef lost its second letter the same way. Latin is right (one glyph per letter). The
-  // converter is native code (not in this layer), so in a field's appearance a glyph of an embedded font that the
-  // converter cannot address by its code point - a shaped form, a ligature, any complex-script glyph - is drawn as
-  // its outline (the same font program, the same place, the same colour): what the PDF shows is exactly what the
-  // editor showed. Glyphs the code point gives right (Latin, digits) stay text; fields in system fonts (the converter
-  // embeds those by glyph id) and every other drawing are unchanged. (window.__xrNoFieldApFix = the original path, for
-  // the engine checks' control round; scripts/engine_checks.py)
-  (function fieldApShaped(){
-    var n = 0, t = setInterval(function () {
-      var P = window.AscPDF, C = window.AscCommon, F = window.AscFonts;
-      var B = P && P.CBaseField && P.CBaseField.prototype, R = C && C.CDocumentRenderer && C.CDocumentRenderer.prototype;
-      if (B && R && B.WriteRenderToBinary && R.tg && C.g_oTextMeasurer && F && F.getEmbeddedFontPrefix) {
-        clearInterval(t);
-        if (B.WriteRenderToBinary.__xr) return;
-        var origWrite = B.WriteRenderToBinary, origTg = R.tg, prefix = F.getEmbeddedFontPrefix();
-        var complex = function (c) {
-          return (c >= 0x0590 && c <= 0x08FF) || (c >= 0x0900 && c <= 0x0DFF) || (c >= 0x0E00 && c <= 0x0EFF) ||
-                 (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFF) || c === 0x200C || c === 0x200D;
-        };
-        // (what the shim did in the last saves, for the engine checks: fields drawn, glyphs drawn as outlines / left as
-        // text, and why a glyph was left as text)
-        var dbg = window.__xrFieldApDbg = {writes: 0, flagged: 0, outlines: 0, text: 0, why: {}, names: {}, err: ''};
-        var why = function (k) { dbg.why[k] = (dbg.why[k] || 0) + 1; };
-        // (build-mac run 41: with a plain assignment the wrapper was not what the save called - the counters stayed 0
-        // although the field was drawn; it is now set as an own property and checked, the result kept in dbg.installed)
-        var install = function (obj, name, fn) {
-          try { obj[name] = fn; } catch (e) {}
-          if (obj[name] !== fn) { try { Object.defineProperty(obj, name, {value: fn, writable: true, configurable: true}); } catch (e) {} }
-          return obj[name] === fn;
-        };
-        var newWrite = function (memory) {
-          var dr = memory && memory.docRenderer;
-          dbg.writes++;
-          if (!dr || window.__xrNoFieldApFix) return origWrite.apply(this, arguments);
-          var was = dr.__xrFieldAp;
-          dr.__xrFieldAp = true;
-          try { return origWrite.apply(this, arguments); } finally { dr.__xrFieldAp = was; }
-        };
-        var newTg = function (gid, x, y, codePoints) {
-          if (this.__xrFieldAp && this.m_lPagesCount > 0) {
-            dbg.flagged++;
-            var mem = this.Memory, p0 = mem ? mem.pos : -1;
-            try {
-              var mf = this.m_arrayPages[this.m_lPagesCount - 1], f = mf && mf.m_oFont;
-              var nm = f && typeof f.Name === 'string' ? f.Name : '';
-              if (Object.keys(dbg.names).length < 12) dbg.names[nm] = (dbg.names[nm] || 0) + 1;
-              if (nm.indexOf(prefix) !== 0) why('not an embedded font');
-              else {
-                var cps = codePoints || [], need = cps.length !== 1, tm = C.g_oTextMeasurer;
-                for (var i = 0; !need && i < cps.length; i++) need = complex(cps[i]);
-                // this font, freshly set up in the measurer's own font manager (72 dpi: outlines in mm, as the page)
-                if (tm.m_oLastFont) tm.m_oLastFont.SetUpName = '';
-                var font = tm.SetFontInternal(nm, f.FontSize, Math.max(f.Style || 0, 0));
-                var mgr = tm.m_oManager;
-                if (!font || !mgr || mgr.m_pFont !== font) why('font not set up');
-                else {
-                  if (!need) need = font.GetGIDByUnicode(cps[0]) !== gid;
-                  if (!need) why('text: its code point gives it');
-                  else {
-                    var g0 = mgr.m_oGlyphString.GetFirstGlyph();
-                    g0.fX = 0; g0.fY = 0;
-                    mgr.LoadStringPathCode(gid, true, x, y, this);
-                    // an outline is a path start + its points + a fill + an end: if nothing but the frame was written
-                    // (no outline for this glyph), the glyph goes as text, as before
-                    if (mem && mem.pos - p0 >= 8) { dbg.outlines++; return; }
-                    why('no outline');
-                    if (mem && mem.pos > p0) mem.pos = p0;
-                  }
-                }
-              }
-            } catch (e) { dbg.err = '' + e; why('error'); if (mem && mem.pos > p0) mem.pos = p0; }
-            dbg.text++;
-          }
-          return origTg.apply(this, arguments);
-        };
-        newWrite.__xr = newTg.__xr = true;
-        dbg.installed = {write: install(B, 'WriteRenderToBinary', newWrite), tg: install(R, 'tg', newTg),
-                         frozen: Object.isFrozen(B) || Object.isFrozen(R)};
-        // the field classes that inherit the method (an own copy on a subclass would bypass the base class's wrapper)
-        ['CTextField', 'CComboBoxField', 'CListBoxField'].forEach(function (k) {
-          var KP = P[k] && P[k].prototype;
-          if (KP && Object.prototype.hasOwnProperty.call(KP, 'WriteRenderToBinary') && KP.WriteRenderToBinary !== newWrite)
-            dbg.installed[k] = install(KP, 'WriteRenderToBinary', newWrite);
-        });
-        window.__xrFieldApFix = dbg.installed.write && dbg.installed.tg;
-      } else if (++n > 2400) clearInterval(t);
-    }, 25);
-  })();
   // XR-FIELD-FIRST-INPUT (16 Nov 2026, store NOTES "first letter lost"): the first thing typed into a PDF form field in
   // a script the editor had not used yet (digits in the Arabic form's date field) did not arrive; typed letter by letter
   // the first letter was lost, typed as one piece the whole piece. The engine's input log (scripts/engine_checks.py,
@@ -760,7 +665,7 @@ if n_ini != 4:
 if n_present != 1:
     raise SystemExit("Present button Arabic label: not found in the presentation editor's app.js")
 log("Present button: Arabic label 'بدء العرض'")
-# the engine functions the shims above wrap at run time (MAC_JS: pdfKeyTick, XR-FIELD-AP) must be in this payload's
+# the engine functions the shims above wrap at run time (MAC_JS: pdfKeyTick, XR-FIELD-FIRST-INPUT) and the sdkjs patches below change must be in this payload's
 # sdkjs under these names - a payload whose engine renamed them would leave a shim silently idle
 SDK_WORD = open(os.path.join(E, "sdkjs", "word", "sdk-all.js"), encoding="utf-8", errors="surrogateescape").read()
 for need in ("CBaseField.prototype.WriteRenderToBinary = function(memory)", "CDocumentRenderer.prototype.tg = function(gid, x, y, codePoints)",
@@ -775,6 +680,90 @@ for need in ("PDFEditorApi.prototype.asc_enterText = function(codePoints, isFrom
     if need not in SDK_WORD_MIN:
         raise SystemExit("engine shim target missing in the payload's sdkjs (min): " + need)
 log("engine shim targets present in sdkjs/word/sdk-all.js + sdk-all-min.js")
+
+# XR-FIELD-AP (16 Nov 2026, APP-BACKLOG 18, HIGH): Arabic typed into a PDF form field whose font is EMBEDDED in the PDF
+# (/DR - many real Arabic forms, and the Windows store demo's /Dubai) looked right while typing but was saved as
+# separate, overlapping letters - in the app after reopening and in every other PDF reader (build-mac runs 39-42:
+# ink match 0.44 with the same text shaped in the same font; Latin 1.0). On Save a changed field's appearance is drawn
+# by sdkjs (CBaseField.WriteRenderToBinary) with its shaped glyphs - glyph id + code points (CDocumentRenderer.tg) -
+# and the native converter writes them into the PDF. For a font embedded in the PDF the converter takes the glyph by its
+# FIRST CODE POINT, not by the glyph id (core PdfWriter CFontEmbedded::EncodeUnicode looks the code point up in the
+# font's ToUnicode first), so every Arabic letter got its isolated form at the place of its joined form, and lam-alef
+# lost its alef. In a field's appearance, a glyph of an embedded font that the converter cannot address by its code
+# point - a shaped form, a ligature, any complex-script glyph - is now drawn as its outline (the same font program, the
+# same place, the same colour): the PDF shows exactly what the editor showed. Glyphs the code point gives right (Latin,
+# digits) stay text; fields in system fonts (the converter embeds those by glyph id) and all other drawing are
+# unchanged; if no outline comes out for a glyph it goes as text, as before. This is a change of sdkjs itself, not a
+# shim in the editor page: since 8.2 the desktop app builds the saved PDF in the converter from the editor's changes
+# (sdkjs isSupportSaveInPDF), so the field appearance is drawn by the converter's copy of sdk-all.js (run 42: a shim in
+# the editor page was installed on the field and never called by the save). (Mac bundle only.)
+FIELD_AP_JS = r"""
+/*XR-FIELD-AP-START*/
+(function (window) {
+  var AscCommon = window['AscCommon'];
+  if (!AscCommon) return;
+  // counters of the last saves in this context (the editor page's copy is read by scripts/engine_checks.py)
+  var dbg = AscCommon.xrFieldApStat = {writes: 0, flagged: 0, outlines: 0, text: 0, why: {}, names: {}, err: ''};
+  try { window['__xrFieldApDbg'] = dbg; } catch (e) {}
+  var why = function (k) { dbg.why[k] = (dbg.why[k] || 0) + 1; };
+  var complex = function (c) {
+    return (c >= 0x0590 && c <= 0x08FF) || (c >= 0x0900 && c <= 0x0DFF) || (c >= 0x0E00 && c <= 0x0EFF) ||
+           (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFF) || c === 0x200C || c === 0x200D;
+  };
+  // true = the glyph was drawn as its outline; false = draw it as text (the original path)
+  AscCommon.xrFieldApTg = function (dr, gid, x, y, codePoints) {
+    if (!(dr.m_lPagesCount > 0)) return false;
+    dbg.flagged++;
+    var mem = dr.Memory, p0 = mem ? mem.pos : -1;
+    try {
+      var F = window['AscFonts'], prefix = F && F.getEmbeddedFontPrefix ? F.getEmbeddedFontPrefix() : 'Embedded: ';
+      var mf = dr.m_arrayPages[dr.m_lPagesCount - 1], f = mf && mf.m_oFont;
+      var nm = f && typeof f.Name === 'string' ? f.Name : '';
+      if (Object.keys(dbg.names).length < 12) dbg.names[nm] = (dbg.names[nm] || 0) + 1;
+      if (nm.indexOf(prefix) !== 0) { why('not an embedded font'); dbg.text++; return false; }
+      var cps = codePoints || [], need = cps.length !== 1, tm = AscCommon.g_oTextMeasurer;
+      for (var i = 0; !need && i < cps.length; i++) need = complex(cps[i]);
+      // this font, freshly set up in the measurer's own font manager (72 dpi: outlines in mm, as the page)
+      if (tm.m_oLastFont) tm.m_oLastFont.SetUpName = '';
+      var font = tm.SetFontInternal(nm, f.FontSize, Math.max(f.Style || 0, 0));
+      var mgr = tm.m_oManager;
+      if (!font || !mgr || mgr.m_pFont !== font || !mgr.LoadStringPathCode) { why('font not set up'); dbg.text++; return false; }
+      if (!need) need = font.GetGIDByUnicode(cps[0]) !== gid;
+      if (!need) { why('text: its code point gives it'); dbg.text++; return false; }
+      var g0 = mgr.m_oGlyphString.GetFirstGlyph();
+      g0.fX = 0; g0.fY = 0;
+      mgr.LoadStringPathCode(gid, true, x, y, dr);
+      // an outline = a path start + its points + a fill + an end (more than the 7 bytes of an empty frame)
+      if (mem && mem.pos - p0 >= 8) { dbg.outlines++; return true; }
+      why('no outline');
+    } catch (e) { dbg.err = '' + e; why('error'); }
+    if (mem && p0 >= 0 && mem.pos > p0) mem.pos = p0;
+    dbg.text++;
+    return false;
+  };
+})(window);
+/*XR-FIELD-AP-END*/
+"""
+FIELD_AP_DRAW_OLD = "oContentToDraw.Draw(oContentToDraw.GetAbsolutePage(), memory.docRenderer);"
+FIELD_AP_DRAW_NEW = ("if (AscCommon.xrFieldApStat) AscCommon.xrFieldApStat.writes++; /*XR-FIELD-AP*/\n"
+                     "        memory.docRenderer.__xrFieldAp = true;\n"
+                     "        try { oContentToDraw.Draw(oContentToDraw.GetAbsolutePage(), memory.docRenderer); }\n"
+                     "        finally { memory.docRenderer.__xrFieldAp = false; }")
+FIELD_AP_TG_OLD = "CDocumentRenderer.prototype.tg = function(gid, x, y, codePoints)\n\t{\n"
+FIELD_AP_TG_NEW = ("CDocumentRenderer.prototype.tg = function(gid, x, y, codePoints)\n\t{\n"
+                   "\t\tif (this.__xrFieldAp && AscCommon.xrFieldApTg && AscCommon.xrFieldApTg(this, gid, x, y, codePoints)) return; /*XR-FIELD-AP*/\n")
+f = os.path.join(E, "sdkjs", "word", "sdk-all.js")
+t = open(f, encoding="utf-8", errors="surrogateescape", newline="").read()        # (line ends kept as they are)
+if "/*XR-FIELD-AP-START*/" not in t:
+    nl = "\r\n" if "\r\n" in t[:20000] else "\n"
+    for old, new in ((FIELD_AP_DRAW_OLD, FIELD_AP_DRAW_NEW), (FIELD_AP_TG_OLD, FIELD_AP_TG_NEW)):
+        k = t.count(old.replace("\n", nl))
+        if k != 1:
+            raise SystemExit("XR-FIELD-AP: expected 1 place in sdkjs/word/sdk-all.js for %r, found %d" % (old[:60], k))
+        t = t.replace(old.replace("\n", nl), new.replace("\n", nl))
+    t = t.rstrip("\r\n") + nl + FIELD_AP_JS.replace("\n", nl)
+    open(f, "w", encoding="utf-8", errors="surrogateescape", newline="").write(t)
+log("Arabic in embedded-font PDF form fields saved as drawn (XR-FIELD-AP, sdkjs/word/sdk-all.js)")
 
 # XR-PPTX-BIDI-LANG (16 Nov 2026, store NOTES "presentation status bar language"): Arabic slide text written as
 # lang="ar-AE" was reported as "Arabic (Saudi Arabia)". A DrawingML run has ONE language (a:rPr lang), and the reader

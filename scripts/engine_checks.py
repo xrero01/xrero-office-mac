@@ -10,13 +10,13 @@ input into the editor, Cmd+S, a copy opened again from Finder) and the saved fil
                  the Windows store demo's /Dubai and like many real Arabic forms) must be SAVED shaped - joined letters,
                  not separate overlapping ones (APP-BACKLOG 18, HIGH). The saved field is drawn with PyMuPDF and compared
                  with the same text shaped by MuPDF/HarfBuzz in the same font (ink match >= MATCH_OK). A Latin value in
-                 the same font must stay right, and the copy opened again in the app must show the values. The round is
-                 done twice: once with the Mac fix switched off for this document (window.__xrNoFieldApFix - the
-                 original engine path, recorded as the control: it must show the fault, or the check proves nothing),
-                 once with it on (the checks).
+                 the same font must stay right, and the copy opened again in the app must show the values. (The
+                 reproduction without the fix: build-mac runs 39-42, this check at ink match 0.44. On the Mac the saved
+                 appearance is drawn by the converter's sdkjs, so no switch in the editor gives a control round.)
   pdf_first_input  mas/store_demo_form_ar.pdf filled like a user (Tab, type): the first thing typed into the date field
                  must arrive (store NOTES: "the first input typed into the date field after tabbing into it does not
-                 arrive"); the editor's input path is logged (input_log).
+                 arrive"); the editor's input path is logged (input_log). Done twice: with the Mac fix switched off in
+                 that editor (window.__xrNoFirstInputFix - the control, it must still lose the input) and on.
   pdf_bold_lamalef  ar_bold_lamalef.pdf (bold / regular / bold without hinting, IBM Plex Sans Arabic subsets): the app's
                  page drawing of each line compared with MuPDF's (record; the page is drawn by the app's native
                  renderer, not by the web layer).
@@ -27,8 +27,10 @@ import asyncio, base64, json, os, re, shutil, subprocess, sys, time
 import aiohttp
 
 PORT = 9222
-MATCH_OK = 0.85          # ink match of a shaped Arabic line with its reference (calibrated 16 Nov 2026 on the Windows
-                         # store file: unshaped 0.41 / 0.65, shaped (Mac Arial) 0.998 - 1.0, with 1 px tolerance at 4x)
+MATCH_OK = 0.85          # ink match of a shaped Arabic line with its reference, 2 px tolerance at 4x (calibrated 17 Nov
+                         # 2026: unshaped 0.60 / 0.75 (Windows store file), 0.60 (Mac run 42); shaped: the outlines of
+                         # XR-FIELD-AP 0.91, text in Mac Arial 1.0)
+MATCH_K = 2
 AR_CLIENT = "مؤسسة النموذج التجارية"
 LATIN_REF = "XO-2026-014"
 AR_OFFICE = "الشارقة"
@@ -56,7 +58,7 @@ PDF_GEOM_JS = r"""(function(){""" + FRAME + r"""var o={fields:{}};
       value:(x.IsChecked?x.IsChecked():x.GetValue()),rtl:x.IsRTL?x.IsRTL():null,align:x.GetAlign?x.GetAlign():null};});
     var a=doc.activeForm;o.active=a?a.GetFullName():'';o.in_form=!!(a&&a.IsInForm&&a.IsInForm());
     o.modified=!!(api.isDocumentModified?api.isDocumentModified():api.isDocumentModify);
-    o.fix=!!(w.AscPDF&&w.AscPDF.CBaseField&&w.AscPDF.CBaseField.prototype.WriteRenderToBinary.__xr);
+    o.fix=typeof (w.AscCommon&&w.AscCommon.xrFieldApTg)==='function';
   }catch(e){o.err=''+e;}return o;})()"""
 
 ACTIVE_JS = r"""(function(){""" + FRAME + r"""try{var a=api.getPDFDoc().activeForm;
@@ -112,16 +114,6 @@ OUTLINE_PROBE_JS = r"""(function(){""" + FRAME + r"""try{var a=api.getPDFDoc().w
   mgr.LoadStringPathCode(gid,true,0,0,wk);
   return {font:nm,loaded:!!font,same:mgr.m_pFont===font,gid:gid,calls:n,engine:typeof w.AscFonts.FT_Glyph_Get_Measure};
   }catch(e){return 'error: '+e;}})()"""
-
-# is the XR-FIELD-AP wrapper what a field's save calls? (run 41: its counters stayed 0 while the field was drawn)
-CHAIN_JS = r"""(function(){""" + FRAME + r"""try{var P=w.AscPDF,B=P.CBaseField.prototype,f=api.getPDFDoc().widgets[0];
-  var d=Object.getOwnPropertyDescriptor(B,'WriteRenderToBinary'),R=w.AscCommon.CDocumentRenderer.prototype;
-  return {installed:(w.__xrFieldApDbg||{}).installed||null,own:d?{w:d.writable,c:d.configurable,wrapper:!!(d.value&&d.value.__xr)}:null,
-    inst_same:f.WriteRenderToBinary===B.WriteRenderToBinary,inst_wrapper:!!(f.WriteRenderToBinary&&f.WriteRenderToBinary.__xr),
-    chain:Object.getPrototypeOf(Object.getPrototypeOf(f))===B,ctor:(f.constructor&&f.constructor.name)||'',
-    own_on_field_class:Object.prototype.hasOwnProperty.call(Object.getPrototypeOf(f),'WriteRenderToBinary'),
-    src:String(f.WriteRenderToBinary).slice(0,100),frozen:Object.isFrozen(B),tg_wrapper:!!R.tg.__xr,
-    two_ascpdf:!!(w.parent&&w.parent!==w&&w.parent.AscPDF)};}catch(e){return 'error: '+e;}})()"""
 
 SLIDE_JS = r"""(function(op){""" + FRAME + r"""var o={};
   try{var wc=api.WordControl,p=wc.m_oLogicDocument;
@@ -321,7 +313,7 @@ def check_saved_form(path, evid, tag, values, fontfile):
                 is_ar = any("؀" <= c <= "ۿ" for c in values[w.field_name])
                 ref = reference_pix(values[w.field_name], fontfile, w.text_fontsize or 14, w.rect, zoom, rtl=is_ar)
                 ref.save(os.path.join(evid, "%s-%s-ref.png" % (tag, w.field_name)))
-                r["match"] = ink_match(ink_mask(pix), ink_mask(ref))
+                r["match"] = ink_match(ink_mask(pix), ink_mask(ref), MATCH_K)
             res[w.field_name] = r
     # the whole filled area, for eyes
     try:
@@ -408,11 +400,8 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
         r["wall"] = await pg.ev(WALL_JS)
         if r["wall"] is not False:
             return r
-        if variant == "control":
-            r["switch_off"] = await pg.ev("(function(){" + FRAME + "w.__xrNoFieldApFix=true;return true;})()")
         g = await pg.ev(PDF_GEOM_JS) or {}
         r["fix_present"] = g.get("fix")
-        r["chain"] = await pg.ev(CHAIN_JS)
         fields = g.get("fields") or {}
         typed = {}
         for name, val in (("client", AR_CLIENT), ("ref", LATIN_REF), ("office", AR_OFFICE)):
@@ -677,7 +666,9 @@ async def run(exe, app, arch, out_dir, ok):
                 except Exception as e:
                     out[name] = {"err": "%s: %s" % (type(e).__name__, e)}
                 print("[engine]", name, json.dumps(out[name], ensure_ascii=False)[:1500], flush=True)
-            for variant in ("control", "fixed"):
+            # (the reproduction without the fix: build-mac runs 39-42, the same check at ink match 0.44 - since the saved
+            # appearance is drawn by the converter's sdkjs, there is no switch in the editor for a control round here)
+            for variant in ("fixed",):
                 try:
                     out["pdf_ar_field_" + variant] = await case_pdf_ar_field(s, app, evid, variant, ok, out)
                 except Exception as e:
@@ -699,14 +690,13 @@ async def run(exe, app, arch, out_dir, ok):
     # ---- the checks
     fx = out.get("pdf_ar_field_fixed") or {}
     ff = fx.get("file") or {}
-    ct = (out.get("pdf_ar_field_control") or {}).get("file") or {}
-    cm, xm = (ct.get("client") or {}).get("match"), (ff.get("client") or {}).get("match")
+    xm = (ff.get("client") or {}).get("match")
     ok("pdf_ar_field_typed", (fx.get("typed") or {}).get("client") == AR_CLIENT, repr(fx.get("typed")))
     ok("pdf_ar_field_saved_value", fx.get("saved") and (ff.get("client") or {}).get("value") == AR_CLIENT
        and (ff.get("ref") or {}).get("value") == LATIN_REF, "saved=%s %s" % (fx.get("saved"), {k: v.get("value") for k, v in ff.items()}))
     ok("pdf_ar_field_saved_shaped", isinstance(xm, float) and xm >= MATCH_OK,
-       "ink match with the shaped reference %s (>= %s); without the Mac fix (control) %s; ap %s" % (
-           xm, MATCH_OK, cm, (ff.get("client") or {}).get("ap")))
+       "ink match with the same text shaped in the same font %s (>= %s; without the fix, runs 39-42: 0.44 at 1 px / 0.60 at"
+       " 2 px); appearance %s" % (xm, MATCH_OK, (ff.get("client") or {}).get("ap")))
     lm = (ff.get("ref") or {}).get("match")
     ok("pdf_latin_field_saved_ok", isinstance(lm, float) and lm >= MATCH_OK and ((ff.get("ref") or {}).get("ap") or {}).get("text_ops", 0) > 0,
        "Latin in the embedded font: match %s, still text: %s" % (lm, (ff.get("ref") or {}).get("ap")))

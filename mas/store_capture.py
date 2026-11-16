@@ -7,8 +7,9 @@ xrero.com while this runs; the start page's sign-in card gets the locally stored
 the previous pictures' local render).
 
 shots: the app in the chosen interface language (the app's own setting, asc_user_ui_lang = en-US / ar-SA), the window
-       at the largest size the screen allows. First four demo files are opened from Finder once (a document, a
-       spreadsheet, a presentation, a PDF) so the start page lists them under Recent files, as a user's would; then
+       at the largest size the screen allows. First seven demo files are opened from Finder once (three earlier ones,
+       then a PDF, a presentation, a spreadsheet, a document) so the start page lists them under Recent files, as a
+       user's would; then
        the app starts again and the start page is photographed, then the neutral demo document (mas/store_demo.docx,
        mas/store_demo_ar.docx for ar) opened from Finder as "Q3 report.docx" (en) / "التقرير الربعي.docx" (ar), the
        caret in its Arabic summary (the status bar and the ribbon show the Arabic paragraph), then (16 Nov 2026, the
@@ -53,23 +54,31 @@ DEMO = {"sheet": os.path.join(HERE, "store_demo_sheet%s.xlsx" % SUF), "slide": o
         "pdf": os.path.join(HERE, "store_demo_form%s.pdf" % SUF)}
 FONT = "Geeza Pro" if LANG == "ar" else "Helvetica Neue"      # the demo files' face (store_demo.py)
 # the signed-in account the pictures show: a team, not a person (16 Nov 2026 review: "Xrero Office" read as a product
-# badge, not an account); its initials are on the start page pill and the editors' account chip
-ACCOUNT = {"en": ("Projects team", "PT"), "ar": ("فريق المشاريع", "فم")}[LANG]
+# badge, not an account); its initials are on the start page pill and the editors' account chip. Round 3: "فريق
+# المشاريع" gave the joined initials "فم", which an Arabic reader takes for the word "mouth"; "فريق العمليات" gives "فع",
+# not a word (the article skipped - web/xr-account.js initials), the same in all four editors
+ACCOUNT = {"en": ("Operations team", "OT"), "ar": ("فريق العمليات", "فع")}[LANG]
 # the window of all ten pictures: its width comes from ribbon-fit.json (picture_width), its height is fixed
 WIN_H = 800
 RIBBON_FIT = os.path.join(OUT, "ribbon-fit.json")
 # the sticky note the capture adds beside the date field (the PDF picture)
 PDF_NOTE = {"en": "The main room is free on this date.", "ar": "القاعة الكبرى متاحة في هذا التاريخ."}[LANG]
 # the Recent files' times on the start picture: working hours, newest first (run 27 showed the CI's 03:31-03:36)
-RECENT_TIMES = ["10:40", "10:31", "10:22", "10:15"]
+RECENT_TIMES = ["10:40", "10:31", "10:22", "10:15", "09:52", "09:41", "09:30"]
 # the folder the pictures' files are opened from: the start picture's Recent files show its path (run 28 showed the CI
 # checkout, "...ro-office-mac/out/store/docs-shots-ar/"), so shots use a neutral shared folder with no user name in its
 # path; its files are copied into OUT/docs-shots-<lang> at the end (evidence). audit / switch keep their OUT folder.
 DOCS = "/Users/Shared/Office files" if MODE == "shots" else os.path.join(OUT, "docs-%s-%s" % (MODE, LANG))
 if MODE == "shots":
     shutil.rmtree(DOCS, ignore_errors=True)
-# the Recent files of the start picture: the four demo files of the pictures, opened oldest first
-RECENTS = [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES["sheet"], DEMO["sheet"]), (DOC_NAME, "DEMO")]
+# the Recent files of the start picture, opened oldest first: three files opened earlier (round 3: four rows left the
+# lower third of the start window empty; store_demo.py make_extras), then the four demo files of the pictures
+EXTRA = {"en": [("Office guide.docx", "store_extra_guide.docx"), ("Training plan.xlsx", "store_extra_training.xlsx"),
+                ("Welcome.pptx", "store_extra_welcome.pptx")],
+         "ar": [("دليل المكتب.docx", "store_extra_guide_ar.docx"), ("خطة التدريب.xlsx", "store_extra_training_ar.xlsx"),
+                ("ترحيب.pptx", "store_extra_welcome_ar.pptx")]}[LANG]
+RECENTS = ([(n, os.path.join(HERE, f)) for n, f in EXTRA] +
+           [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES["sheet"], DEMO["sheet"]), (DOC_NAME, "DEMO")])
 # the PDF form as the capture fills it in (store_demo.py PDF_FIELDS order = the form's tab order); True = tick (Enter)
 PDF_FILL = {"en": [("department", "Projects"), ("office", "Sharjah"), ("date", "24 Nov 2026"), ("attendees", "12"),
                    ("display", True), ("video", True), ("refreshments", False),
@@ -226,7 +235,7 @@ TIPS_JS = """(function(){var f=document.querySelector('iframe[name=frameEditor]'
   return {shim:!!((f&&f.contentWindow)||window).__xrNoFeatureTips, tips:tips, dialogs:dlgs, url:location.search.slice(0,160)};})()"""
 
 # the stored state of a signed-in user (what the account card writes after a sign-in) - local only, no server account;
-# the name is a team, not a person (ACCOUNT: "Projects team" -> "PT"; "فريق المشاريع" -> "فم", the article skipped -
+# the name is a team, not a person (ACCOUNT: "Operations team" -> "OT"; "فريق العمليات" -> "فع", the article skipped -
 # web/xr-account.js initials)
 SESSION_JS = """new Promise(function(done){try{
   if(!localStorage.getItem('xr-acct-token')){localStorage.setItem('xr-acct-token','local-store-pictures');
@@ -465,6 +474,30 @@ UI_JS = r"""(function(){""" + FRAME + r"""
   return {latin:latin,inputs:inputs,text:all.join(' | ').slice(0,6000),chip:chip?chip.textContent:null};})()"""
 
 
+# (round 3) the editor's header: the window title's centre against the page's centre (the Arabic title sat 90 pt left
+# of the centre - patch_bundle.py XR-TITLE-RTL) and the active ribbon tab's underline colour (white on the teal header
+# in all four editors, not each editor's own colour - XR-TABLINE)
+HEADER_JS = r"""(function(){""" + FRAME + r"""var o={};
+  var t=d.getElementById('title-doc-name');
+  if(t){var r=t.getBoundingClientRect(),b=w.getComputedStyle(t.parentNode);o.title=t.value||'';
+    o.title_cx=Math.round(fr.left+r.left+r.width/2);o.page_cx=Math.round(window.innerWidth/2);o.title_dx=o.title_cx-o.page_cx;
+    o.title_w=Math.round(r.width);o.pad=[b.paddingLeft,b.paddingRight];}
+  var a=d.querySelector('.ribtab.active');
+  if(a){var s=w.getComputedStyle(a,'::after');o.tab=(a.innerText||'').trim();o.underline=s.borderTopColor;o.underline_opacity=s.opacity;}
+  return o;})()"""
+# (round 3) the presentation editor's red Present button in the status bar: the gap between its label and the split
+# divider (the label touched it) and the drop-down chevron's colour (half dark on red) - patch_bundle.py XR-PRESENT
+PRESENT_JS = r"""(function(){""" + FRAME + r"""var o={};
+  var g=d.querySelector('#slot-status-btn-preview .xr-present-btn');if(!g)return {err:'no Present button'};
+  var lab=g.querySelector('.xr-present-label'),tg=g.querySelector('.dropdown-toggle'),ca=tg&&tg.querySelector('.caret');
+  if(!lab||!tg)return {err:'no label or drop-down part'};
+  var l=lab.getBoundingClientRect(),t=tg.getBoundingClientRect(),left=t.left+t.width/2<l.left+l.width/2;
+  o.label=(lab.textContent||'').trim();o.toggle_side=left?'left':'right';
+  o.gap=Math.round((left?l.left-t.right:t.left-l.right)*10)/10;
+  if(ca){var cs=w.getComputedStyle(ca);o.caret=[cs.borderTopColor,cs.borderLeftColor];}
+  o.font=w.getComputedStyle(lab).fontFamily.slice(0,60);return o;})()"""
+
+
 # a visible control of the editor frame by CSS selector: its centre (page coordinates, for CDP input), pressed or not;
 # on a split button its main part (not the arrow)
 CTRL_JS = r"""(function(sel){""" + FRAME + r"""
@@ -579,7 +612,9 @@ def pdf_marks():
     ring = [(cx + rx * (1 + 0.03 * math.sin(3 * t)) * math.cos(t), cy + ry * (1 + 0.05 * math.cos(2 * t)) * math.sin(t))
             for t in [-2.7 + k * (2 * math.pi + 0.5) / 60 for k in range(61)]]
     y = (box.y0 + box.y1) / 2
-    a, b = (box.x1 - 0.4, box.x0 + 0.4) if rtl else (box.x0 + 0.4, box.x1 - 0.4)
+    # the drag ends 3 pt past the line's end (round 3: ending 0.4 pt inside the last word left its full stop out of the
+    # highlight in both languages - "meeting|." / "الأقل|.")
+    a, b = (box.x1 - 0.4, box.x0 - 3) if rtl else (box.x0 + 0.4, box.x1 + 3)
     line = [(a + (b - a) * k / 16.0, y) for k in range(17)]
     note = (dr.x1 + 12, dr.y0 + 2) if rtl else (dr.x0 - 32, dr.y0 + 2)
     return {"line": line, "ring": ring, "note": note, "box": [round(v, 1) for v in box], "date": [round(v, 1) for v in dr]}
@@ -657,6 +692,18 @@ async def prep_marks(pg, pre):
         await pg.key(27, "Escape")
         await asyncio.sleep(1)
     o["annots"] = await pg.ev(PDF_ANNOTS_JS)
+    # (round 3) the highlight covers the whole line, its full stop too: its rectangle reaches both ends of the line's
+    # words (MuPDF's word boxes keep the full stop with the last word), within 1 pt
+    try:
+        hl = [a[1] for a in o["annots"] if a[0] == HIGHLIGHT and len(a[1]) == 4]
+        bx = m["box"]
+        o["highlight_rects"] = hl
+        if hl and not any(abs((r[2] - r[0]) - (bx[2] - bx[0])) < 0.3 * (bx[2] - bx[0]) for r in hl):
+            o["highlight_covers"] = "unknown: the rectangle is not in page points"      # (checked by eye then)
+        else:
+            o["highlight_covers"] = bool(hl) and any(r[0] <= bx[0] + 1.0 and r[2] >= bx[2] - 1.0 for r in hl)
+    except Exception as e:
+        o["highlight_covers"] = "unknown: %s" % e
     return o
 
 
@@ -1024,6 +1071,11 @@ async def main():
                     res.setdefault("ui", {})[tag] = await pg.ev(UI_JS)
                     log(tag, "final:", json.dumps(res["editors_final"][tag], ensure_ascii=False),
                         "latin:", json.dumps((res["ui"][tag] or {}).get("latin"), ensure_ascii=False))
+                    res.setdefault("header", {})[tag] = await pg.ev(HEADER_JS)
+                    log(tag, "header:", json.dumps(res["header"][tag], ensure_ascii=False))
+                    if tag == "slide":
+                        res["present"] = await pg.ev(PRESENT_JS)
+                        log("present button:", json.dumps(res["present"], ensure_ascii=False))
                     caret = tag in ("editor", "slide", "pdf")
                     box = place_window()[:4]
                     await asyncio.sleep(1.5)
@@ -1080,8 +1132,8 @@ if MODE in ("shots", "switch"):
     if LANG == "ar" and left_ui:
         bad.append("English on the Arabic start page: %s" % left_ui)
 if MODE == "shots":
-    if len(sp.get("recents") or []) < 4 or not all("data:image/webp" in x for x in sp.get("recents") or []):
-        bad.append("recent files on the start picture (4, kit pictures): %s" % sp.get("recents"))
+    if len(sp.get("recents") or []) < len(RECENTS) or not all("data:image/webp" in x for x in sp.get("recents") or []):
+        bad.append("recent files on the start picture (%d, kit pictures): %s" % (len(RECENTS), sp.get("recents")))
     # (16 Nov 2026 review) the account reads as a team account, at working hours, the Arabic date column's own name
     if sp.get("pill") != "%s|%s" % (ACCOUNT[1], ACCOUNT[0]):
         bad.append("account pill %r, not %s|%s" % (sp.get("pill"), ACCOUNT[1], ACCOUNT[0]))
@@ -1132,6 +1184,24 @@ if MODE == "shots":
                 bad.append("%s picture: English in the Arabic interface %s" % (tag, left[:12]))
         if u.get("chip") != ACCOUNT[1]:
             bad.append("%s picture: account chip %r, not %s" % (tag, u.get("chip"), ACCOUNT[1]))
+    # (round 3) the window title centred over the window in both directions (patch_bundle.py XR-TITLE-RTL), the active
+    # ribbon tab's underline white on the teal header (XR-TABLINE)
+    for tag, h in (res.get("header") or {}).items():
+        h = h or {}
+        if not isinstance(h.get("title_dx"), (int, float)) or abs(h["title_dx"]) > 4:
+            bad.append("%s picture: window title not centred over the window: %s" % (tag, h))
+        if h.get("underline") != "rgb(255, 255, 255)":
+            bad.append("%s picture: active tab underline %r, not white" % (tag, h.get("underline")))
+    for tag in ("editor", "sheet", "slide", "pdf"):
+        if tag not in (res.get("header") or {}):
+            bad.append("%s picture: header not measured" % tag)
+    # (round 3) Present: the label clear of the split divider, the chevron white, the Arabic label "بدء العرض" (XR-PRESENT)
+    pr = res.get("present") or {}
+    want_label = {"en": "Present", "ar": "بدء العرض"}[LANG]
+    if (pr.get("label") != want_label or not isinstance(pr.get("gap"), (int, float)) or pr["gap"] < 5
+            or any(c != "rgb(255, 255, 255)" for c in (pr.get("caret") or ["none"]))):
+        bad.append("presentation picture: Present button (label %s, at least 5 px from the divider, white chevron): %s"
+                   % (want_label, pr))
     for k, v in res.items():
         if k.startswith("titlebar_") and priv.findall(json.dumps(v, ensure_ascii=False)):
             bad.append("%s: private data %s" % (k, priv.findall(json.dumps(v, ensure_ascii=False))[:5]))
@@ -1151,6 +1221,13 @@ if MODE == "shots":
                    "no comment balloon): %s" % json.dumps(pi, ensure_ascii=False)[:2500])
     if INK not in (pi.get("annots") or []):
         print("note: no pen circle on the PDF picture (optional):", (pi.get("marks") or {}).get("pen_button"))
+    # (round 3) the highlight reaches the line's full stop
+    hc = (pi.get("marks") or {}).get("highlight_covers")
+    if hc is False:
+        bad.append("PDF picture: the highlight does not cover the whole line %s: %s" % (
+            (pi.get("marks") or {}).get("marks", {}).get("box"), (pi.get("marks") or {}).get("highlight_rects")))
+    elif hc is not True:
+        print("note: highlight coverage not measured:", hc, (pi.get("marks") or {}).get("highlight_rects"))
     rt = res.get("pdf_roundtrip") or {}
     print("PDF round trip (save, file, reopen):", "OK" if rt.get("ok") else "NOT OK", rt.get("checks"))
     # (run 28: the boxes ticked with Enter were "Off" in the saved file) the store text says "form filling" only if

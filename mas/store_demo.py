@@ -10,6 +10,8 @@ The neutral sample documents the Mac App Store pictures show (mas/store_capture.
   store_demo_form[_ar].pdf      picture 5: a one-page fillable PDF form (text fields + check boxes), empty and without
                                 annotations: the capture makes the highlight, the ink circle and the sticky note with
                                 the app's own Comment tools and fills the form in the app (16 Nov 2026 review)
+  store_extra_{guide.docx,training.xlsx,welcome.pptx} [_ar]   picture 2 (round 3): three more files opened earlier,
+                                listed under Recent files on the start page (names only; not shown in an editor)
   (the PDF's page text is laid out by MuPDF with IBM Plex Sans Arabic, SIL OFL 1.1 - embedded as a subset: set
    XR_DEMO_FONTS to a folder with IBMPlexSansArabic-Regular.ttf + -Bold.ttf, otherwise the committed PDFs are kept)
 All of them: one neutral UAE story (three offices, 29 projects delivered in Q3 - the report's own numbers), counts and
@@ -199,7 +201,8 @@ SHEET = {
                rows=(("Dubai", 9, 11, 12), ("Abu Dhabi", 7, 8, 10), ("Sharjah", 3, 5, 7)), total="Total",
                chart="Projects by office", widths=(15, 10, 10, 10, 10)),
     "ar": dict(rtl=True, font=ARABIC, sheet="المشاريع", title="المشاريع المنجزة حسب المكتب · 2026",
-               sub="عدد المشاريع المنجزة في كل ربع", head=("المكتب", "الربع الأول", "الربع الثاني", "الربع الثالث", "المجموع"),
+               # (round 3: one word for "Total" in the header and the total row, as the English sheet has)
+               sub="عدد المشاريع المنجزة في كل ربع", head=("المكتب", "الربع الأول", "الربع الثاني", "الربع الثالث", "الإجمالي"),
                rows=(("دبي", 9, 11, 12), ("أبوظبي", 7, 8, 10), ("الشارقة", 3, 5, 7)), total="الإجمالي",
                chart="المشاريع المنجزة حسب المكتب", widths=(12, 11, 11, 11, 10)),
 }
@@ -363,14 +366,19 @@ def chart_xml(c, vals):
 # picture 4: presentation - 16:9, the Xrero palette. Slide 1 = the designed title slide (the picture: the caret at the
 # end of its title), slide 2 = the branch-office slide (three figures from the report), 3 = a column chart, 4 = next
 # steps. Arabic: right-to-left paragraphs (a:pPr rtl), the shapes mirrored.
+# Round 3 (16 Nov 2026 review: "Presentations in Arabic and English" sat over decks in one language only): the title
+# slide is bilingual, as UAE decks often are - the title in the deck's language and under it the same title in the
+# other language, each paragraph in its own direction and face (other / other_rtl / other_font)
 SLIDES = {
     "en": dict(rtl=False, font=LATIN, title="Q3 review", sub="Projects and offices across the UAE · 2026",
+               other="مراجعة الربع الثالث", other_rtl=True, other_font=ARABIC,
                branch="New office in Sharjah", branch_sub="Opened in the third quarter of 2026",
                stats=(("29", "projects delivered in Q3"), ("3", "emirates"), ("1", "new office")),
                chart="Projects by office", offices=("Dubai", "Abu Dhabi", "Sharjah"), quarters=("Q1", "Q2", "Q3"),
                next="Next steps", steps=("One template for Arabic and English documents",
                                          "A weekly project review in every office", "The Q4 plan by the end of November")),
     "ar": dict(rtl=True, font=ARABIC, title="مراجعة الربع الثالث", sub="المشاريع والمكاتب في الإمارات · 2026",
+               other="Q3 review", other_rtl=False, other_font=LATIN,
                branch="مكتب جديد في الشارقة", branch_sub="افتُتح في الربع الثالث من عام 2026",
                stats=(("29", "مشروعًا منجزًا في الربع الثالث"), ("3", "إمارات"), ("1", "مكتب جديد")),
                chart="المشاريع المنجزة حسب المكتب", offices=("دبي", "أبوظبي", "الشارقة"),
@@ -401,25 +409,28 @@ def make_slides(path, lang):
     def X(x, w):                     # positions are written left to right; Arabic mirrors them
         return Inches(W - x - w if rtl else x)
 
-    def text(tf, lines, size, color, bold=False, align=None, after=0, bullet=False):
+    def text(tf, lines, size, color, bold=False, align=None, after=0, bullet=False, prtl=None, face=None):
+        # prtl / face: a paragraph in the other language (the title slide's second title): its own direction and face
+        prtl = rtl if prtl is None else prtl
+        face = face or f
         tf.word_wrap = True
         for i, t in enumerate(lines):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.alignment = align if align is not None else (PP_ALIGN.RIGHT if rtl else PP_ALIGN.LEFT)
             p.space_after = Pt(after)
             pPr = p._p.get_or_add_pPr()
-            if rtl:
+            if prtl:
                 pPr.set("rtl", "1")
             if not bullet:
                 pPr.set("indent", "0"); pPr.set("marL", "0")
                 pPr.insert(0, parse_xml('<a:buNone xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>'))
             r = p.add_run()
             r.text = t
-            r.font.size, r.font.bold, r.font.name = Pt(size), bold, f
+            r.font.size, r.font.bold, r.font.name = Pt(size), bold, face
             r.font.color.rgb = color
             rPr = r._r.get_or_add_rPr()
-            rPr.set("lang", "ar-AE" if rtl else "en-US")
-            rPr.find(pq("a:latin")).addnext(parse_xml('<a:cs xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" typeface="%s"/>' % f))
+            rPr.set("lang", "ar-AE" if prtl else "en-US")
+            rPr.find(pq("a:latin")).addnext(parse_xml('<a:cs xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" typeface="%s"/>' % face))
             # the paragraph's end mark carries the run's properties (language, face, size, bold) - the caret after the
             # title's last letter sits on it: run 23's Arabic status bar showed the interface default "...السعودية"
             # there instead of the text's ar-AE
@@ -467,9 +478,13 @@ def make_slides(path, lang):
                  (MSO_SHAPE.OVAL, 7.85, 5.55, 0.5, 0.5, sand, None)):
         shape(s1, *args)
     shape(s1, MSO_SHAPE.OVAL, 10.65, 0.55, 1.45, 1.45, None, None, light, 2.25)
-    shape(s1, MSO_SHAPE.RECTANGLE, 0.95, 3.72, 1.25, 0.08, light)
-    text(place(s1.shapes.title, 0.95, 2.05, 6.9, 1.55, MSO_ANCHOR.BOTTOM, inset=0.3), [c["title"]], 54, C.from_string("FFFFFF"), True)
-    text(place(s1.placeholders[1], 0.95, 3.98, 6.9, 0.9), [c["sub"]], 22, C.from_string("C7E6EC"))
+    # (round 3) the block 0.5 in higher than before: the title, the same title in the other language, the rule, the line
+    shape(s1, MSO_SHAPE.RECTANGLE, 0.95, 4.02, 1.25, 0.08, light)
+    text(place(s1.shapes.title, 0.95, 1.55, 6.9, 1.55, MSO_ANCHOR.BOTTOM, inset=0.3), [c["title"]], 54, C.from_string("FFFFFF"), True)
+    tb = s1.shapes.add_textbox(X(0.95, 6.9), Inches(3.12), Inches(6.9), Inches(0.72))
+    tb.text_frame.margin_left = tb.text_frame.margin_right = 0
+    text(tb.text_frame, [c["other"]], 30, light, prtl=c["other_rtl"], face=c["other_font"])
+    text(place(s1.placeholders[1], 0.95, 4.28, 6.9, 0.9), [c["sub"]], 22, C.from_string("C7E6EC"))
 
     # 2 - the branch-office slide
     s2 = prs.slides.add_slide(prs.slide_layouts[5])
@@ -596,22 +611,30 @@ def make_pdf(path, lang, font_dir):
     fields["notes"] = R(50, 303, 545, 343)
     note = R(50, 350, 545, 368)
     put(note, c["note"], 10, "5B6B70")          # (the capture highlights this line in the app)
-    put(R(50, 398, 545, 420), c["h4"], 12.5, "0585A1", True); rule(423)
+    # "For office use" at the foot of the page (round 3: at y 398 the picture's window edge cut the page right under
+    # its heading; now the edge runs through blank page under the deadline line)
+    put(R(50, 700, 545, 722), c["h4"], 12.5, "0585A1", True); rule(725)
     for x, t in ((50, c["office"][0]), (305, c["office"][1])):
-        put(R(x, 438, x + 80, 459), t, 10.5, "3D4B50")
-        r = R(x + 84, 456, x + 240, 456.5)
-        pg.draw_line((r.x0, 456), (r.x1, 456), color=(0.6, 0.68, 0.7), width=0.7)
+        put(R(x, 740, x + 80, 761), t, 10.5, "3D4B50")
+        r = R(x + 84, 758, x + 240, 758.5)
+        pg.draw_line((r.x0, 758), (r.x1, 758), color=(0.6, 0.68, 0.7), width=0.7)
 
     for name in PDF_FIELDS:
         w = fitz.Widget()
         w.field_name = name
         w.rect = fields[name]
-        w.border_color, w.border_width = (0.67, 0.78, 0.81), 0.8
         w.fill_color = (0.965, 0.98, 0.984)
         if name in ("display", "video", "refreshments"):
+            w.border_color, w.border_width = (0.67, 0.78, 0.81), 0.8
             w.field_type = fitz.PDF_WIDGET_TYPE_CHECKBOX
             w.field_value = False
         else:
+            # the text inset (round 3: typed text sat 1-2 px from the frame): the editor places a text field's text
+            # 2 x its border width in from the field's edge (sdkjs CTextField.RecalculateContentRect), so the field's
+            # border is 2 pt wide and has no colour (not drawn, sdkjs DrawBorders) - 4 pt of inset; the visible 0.8 pt
+            # frame is drawn on the page just outside the field (the editor fills the field's own rectangle)
+            w.border_width = 2
+            pg.draw_rect(fields[name] + (-0.5, -0.5, 0.5, 0.5), color=(0.67, 0.78, 0.81), width=0.8)
             w.field_type = fitz.PDF_WIDGET_TYPE_TEXT
             # (Helv has no Arabic: the app types Arabic in a fallback face that looked smaller and greyer than the
             # 10.5 pt labels at 11 pt - 14 pt in the Arabic form, 16 Nov 2026 review; at 13 pt (run 28) the dots of
@@ -630,7 +653,113 @@ def make_pdf(path, lang, font_dir):
     print("wrote", path, {k: [round(v, 1) for v in r] for k, r in fields.items()})
 
 
-KINDS = sys.argv[2:] or ["docx", "sheet", "slides", "pdf"]
+# ------------------------------------------------------------------------------------------------------------------
+# picture 2 (start page), round 3: three more files a user of the same team would have opened earlier that morning,
+# so Recent files is not four rows over an empty third of the window. Small, real files in the same neutral story (an
+# office guide, a training plan, a welcome slide); store_capture.py opens them from Finder before the four picture
+# files (oldest first). Never shown inside an editor in the pictures - only their names, kinds and times.
+EXTRA = {
+    "en": dict(rtl=False, font=LATIN,
+               guide=("Office guide", "Meeting rooms are booked with the room request form, at least two working days "
+                                      "before the meeting.",
+                      ("Each office has one large meeting room and two small ones.",
+                       "Visitors sign in at the reception desk.",
+                       "Printed documents are collected from the print room.")),
+               training=("Training plan", ("Course", "Month", "Sessions", "Places"),
+                         (("Document templates", "October", 2, 18), ("Spreadsheet basics", "November", 3, 24),
+                          ("Presenting with slides", "December", 2, 15))),
+               welcome=("Welcome to the Sharjah office", "Opened in the third quarter of 2026")),
+    "ar": dict(rtl=True, font=ARABIC,
+               guide=("دليل المكتب", "تُحجز قاعات الاجتماعات عبر نموذج طلب الحجز قبل موعد الاجتماع بيومَي عمل على الأقل.",
+                      ("في كل مكتب قاعة اجتماعات كبيرة وقاعتان صغيرتان.",
+                       "يسجّل الزوار دخولهم لدى مكتب الاستقبال.",
+                       "تُستلم المستندات المطبوعة من غرفة الطباعة.")),
+               training=("خطة التدريب", ("الدورة", "الشهر", "الجلسات", "المقاعد"),
+                         (("قوالب المستندات", "أكتوبر", 2, 18), ("أساسيات جداول البيانات", "نوفمبر", 3, 24),
+                          ("العرض بالشرائح", "ديسمبر", 2, 15))),
+               welcome=("مرحبًا بكم في مكتب الشارقة", "افتُتح في الربع الثالث من عام 2026")),
+}
+
+
+def make_extras(lang, suf):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor as C
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt as PPt
+    import datetime
+    c = EXTRA[lang]
+    rtl, f = c["rtl"], c["font"]
+    # 1. the office guide (.docx)
+    title, intro, items = c["guide"]
+    d = Document()
+    for s in d.sections:
+        s.page_width, s.page_height = Cm(21.0), Cm(29.7)
+        s.left_margin = s.right_margin = Cm(2.3)
+    fonts(d.styles["Normal"].element.get_or_add_rPr())
+    run(para(d, rtl=rtl, after=8), title, 24, True, INK, rtl=rtl)
+    run(para(d, rtl=rtl, after=8), intro, 12, rtl=rtl)
+    for t in items:
+        run(para(d, rtl=rtl, after=3, style="List Bullet"), t, 12, rtl=rtl)
+    cp = d.core_properties
+    cp.title, cp.author, cp.last_modified_by, cp.comments, cp.subject, cp.keywords = title, "Xrero", "Xrero", "", "", ""
+    p = os.path.join(OUT, "store_extra_guide%s.docx" % suf)
+    d.save(p)
+    print("wrote", p)
+    # 2. the training plan (.xlsx)
+    title, head, rows = c["training"]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title
+    ws.sheet_view.rightToLeft = rtl
+    side = "right" if rtl else "left"
+    ws["A1"] = title
+    ws["A1"].font = Font(name=f, size=14, bold=True, color="0B3F4B")
+    for i, h in enumerate(head):
+        x = ws.cell(row=3, column=i + 1, value=h)
+        x.font = Font(name=f, size=11, bold=True, color="FFFFFF")
+        x.fill = PatternFill("solid", fgColor="0585A1")
+        x.alignment = Alignment(horizontal=side if i < 2 else "center")
+    for r, row in enumerate(rows, 4):
+        for i, v in enumerate(row):
+            x = ws.cell(row=r, column=i + 1, value=v)
+            x.font = Font(name=f, size=11)
+            x.alignment = Alignment(horizontal=side if i < 2 else "center")
+    for col, wd in zip("ABCD", (26, 14, 11, 11)):
+        ws.column_dimensions[col].width = wd
+    wb.properties.creator = wb.properties.lastModifiedBy = "Xrero"
+    wb.properties.title = title
+    p = os.path.join(OUT, "store_extra_training%s.xlsx" % suf)
+    wb.save(p)
+    repack(p, lambda n, b: neutral_theme(n, b, LATIN, ARABIC))
+    print("wrote", p)
+    # 3. the welcome slide (.pptx)
+    title, sub = c["welcome"]
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    s = prs.slides.add_slide(prs.slide_layouts[0])
+    for ph, t, size, bold in ((s.shapes.title, title, 44, True), (s.placeholders[1], sub, 22, False)):
+        ph.left, ph.width = Inches(0.95), Inches(11.4)
+        para_ = ph.text_frame.paragraphs[0]
+        para_.alignment = PP_ALIGN.RIGHT if rtl else PP_ALIGN.LEFT
+        if rtl:
+            para_._p.get_or_add_pPr().set("rtl", "1")
+        r = para_.add_run()
+        r.text = t
+        r.font.size, r.font.bold, r.font.name = PPt(size), bold, f
+        r.font.color.rgb = C.from_string("0B3F4B" if bold else "5B6B70")
+        r._r.get_or_add_rPr().set("lang", "ar-AE" if rtl else "en-US")
+    cp = prs.core_properties
+    cp.title, cp.author, cp.last_modified_by, cp.comments = title, "Xrero", "Xrero", ""
+    cp.created = cp.modified = datetime.datetime(2026, 11, 16)
+    p = os.path.join(OUT, "store_extra_welcome%s.pptx" % suf)
+    prs.save(p)
+    repack(p, lambda n, b: neutral_theme(n, b, LATIN, ARABIC))
+    print("wrote", p)
+
+
+KINDS = sys.argv[2:] or ["docx", "sheet", "slides", "pdf", "extra"]
 if "docx" in KINDS:
     make(os.path.join(OUT, "store_demo.docx"), second_line_ar=False)
     make(os.path.join(OUT, "store_demo_ar.docx"), second_line_ar=True)
@@ -639,6 +768,8 @@ for lang, suf in (("en", ""), ("ar", "_ar")):
         make_sheet(os.path.join(OUT, "store_demo_sheet%s.xlsx" % suf), lang)
     if "slides" in KINDS:
         make_slides(os.path.join(OUT, "store_demo_slides%s.pptx" % suf), lang)
+    if "extra" in KINDS:
+        make_extras(lang, suf)
     if "pdf" in KINDS:
         fd = os.environ.get("XR_DEMO_FONTS", "")
         if all(os.path.isfile(os.path.join(fd, n)) for n in ("IBMPlexSansArabic-Regular.ttf", "IBMPlexSansArabic-Bold.ttf")):

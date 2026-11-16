@@ -367,16 +367,48 @@ log("editors replaced; snapshots removed")
 # Editor header colour: the payload's XR-HEADER block (from the Windows release) paints the top bar of each editor in
 # its own colour (#2B579A blue for documents ...). The Mac app uses the one Xrero teal for all of them (15 Nov 2026).
 TEAL = "#0585A1"
-n_hdr = 0
+# The active ribbon tab's underline (round 3 of the store pictures, 16 Nov 2026): the tabs sit on the header, and the
+# underline kept each editor's own colour (--highlight-toolbar-tab-underline-*: #446995 documents, #3A8056
+# spreadsheets, #B75B44 presentations, #AA5252 PDF) - on the one teal the documents and spreadsheet underlines all but
+# disappeared, so no tab looked active. White, like the tab names, in all four (XR-TABLINE; only the tab underline
+# uses these variables: web-apps toolbar.less .tab-toolbar-color)
+TABLINE = ("/*XR-TABLINE*/.theme-white{" + "".join("--highlight-toolbar-tab-underline-%s:#fff!important;" % k for k in
+                                                     ("document", "spreadsheet", "presentation", "pdf", "visio")) +
+           "}/*XR-TABLINE-END*/")
+n_hdr = n_line = 0
 for css in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "resources", "css", "app.css")):
     t = open(css, encoding="utf-8", errors="surrogateescape").read()
     def teal(m):
-        return re.sub(r"(--toolbar-header-(?:document|spreadsheet|presentation|pdf|visio):)\s*#[0-9A-Fa-f]{3,8}", r"\g<1>" + TEAL, m.group(0))
+        b = re.sub(r"(--toolbar-header-(?:document|spreadsheet|presentation|pdf|visio):)\s*#[0-9A-Fa-f]{3,8}", r"\g<1>" + TEAL, m.group(0))
+        return b.replace("/*XR-HEADER-END*/", "/*XR-HEADER-END*/" + TABLINE) if "/*XR-TABLINE*/" not in t else b
     t2 = re.sub(r"/\*XR-HEADER\*/.*?/\*XR-HEADER-END\*/", teal, t, flags=re.S)
     if t2 != t:
         open(css, "w", encoding="utf-8", errors="surrogateescape").write(t2)
         n_hdr += 1
-log("editor header colour -> Xrero teal in", n_hdr, "stylesheets")
+        n_line += "/*XR-TABLINE*/" in t2
+log("editor header colour -> Xrero teal in", n_hdr, "stylesheets; white tab underline in", n_line)
+if n_line < 4:
+    raise SystemExit("tab underline: expected the four editors' app.css, changed %d" % n_line)
+
+# The window title (the file name over the ribbon) in the right-to-left interface (round 3 of the store pictures): the
+# header centres the title by padding its box by the difference between the space on its left and on its right
+# (Header.js updateDocNamePosition). Both measures are physical - "left" = the box's left offset, "right" = the width of
+# the next header group - so right to left, where the next group is on the LEFT and the quick-access buttons on the
+# right, both measured the left side: the title was centred in the space beside the buttons, 90 pt left of the window's
+# centre in every Arabic editor. Right to left the two sides now swap: left = the next group, right = the groups before
+# the box (on its right). Left to right nothing changes. (XR-TITLE-RTL; Mac bundle only)
+HDR = os.path.join(E, "web-apps", "apps", "common", "main", "lib", "view", "Header.js")
+s = open(HDR, encoding="utf-8").read()
+s, n_title = re.subn(
+    r"var _left_width = Common\.Utils\.getPosition\(\$parent\)\.left,\s*_right_width = \$parent\.next\(\)\.outerWidth\(\)",
+    "var _xrRtl = !!(Common.UI.isRTL && Common.UI.isRTL()), /*XR-TITLE-RTL*/\n"
+    "                        _left_width = _xrRtl ? $parent.next().outerWidth() : Common.Utils.getPosition($parent).left,\n"
+    "                        _right_width = _xrRtl ? _.reduce($parent.prevAll().toArray(), function (sum, e) { return sum + $(e).outerWidth(); }, 0)"
+    " : $parent.next().outerWidth()", s)
+if n_title != 2:
+    raise SystemExit("window title centring (Header.js updateDocNamePosition): expected 2 places, found %d" % n_title)
+open(HDR, "w", encoding="utf-8").write(s)
+log("window title centred right to left (Header.js):", n_title, "places")
 
 # Arabic wording in the editors (16 Nov 2026, store-picture review; Mac bundle only, the Windows payload is unchanged):
 #  - status bar "Word count": "تعداد الكلمات" (enumeration of the words) -> "عدد الكلمات"
@@ -473,7 +505,13 @@ MAC_JS = r"""
   if (!/Mac/i.test(navigator.platform || '')) return;
   var css = '#xr-b-ctx,#xr-hdr-btns .xr-lang,#xr-b-share,#xr-designs-launch,#xr-design-ov{display:none!important}' +
     // the account chip's initials in the Mac system font (its Windows face is Segoe UI, absent on a Mac)
-    '#xr-hdr-btns .xr-ava{font:600 10.5px/24px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif!important;letter-spacing:.2px}';
+    '#xr-hdr-btns .xr-ava{font:600 10.5px/24px -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif!important;letter-spacing:.2px}' +
+    // XR-PRESENT (round 3 of the store pictures): the presentation editor's red Present button (the payload's
+    // stylePresentButton) - its label ran into the split divider (Bootstrap's ".btn-group .btn + .btn" margin wins over
+    // the payload's 7 px) and its chevron was half dark on the red (only the top border was made white). The label in
+    // the Mac system font (its Windows face, Segoe UI, is absent), 9 px before the divider; the chevron white
+    '#slot-status-btn-preview .xr-present-btn .xr-present-label{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif!important;margin-inline-end:9px!important}' +
+    '#slot-status-btn-preview .xr-present-btn .dropdown-toggle .caret{border-color:#fff!important}';
   function add(){
     if (document.getElementById('xr-mac-css')) return;
     var s = document.createElement('style'); s.id = 'xr-mac-css'; s.textContent = css;
@@ -539,19 +577,29 @@ MAC_JS = r"""
 INI_OLD = "var p=n.split(/\\s+/); return ((p[0][0]||'')+(p.length>1?(p[p.length-1][0]||''):'')).toUpperCase(); }"
 INI_NEW = ("var p=n.split(/\\s+/); var i1=function(w){return /^\\u0627\\u0644[\\u0621-\\u064A]{2,}/.test(w)?w[2]:(w[0]||'');}; "
            "return (i1(p[0])+(p.length>1?i1(p[p.length-1]):'')).toUpperCase(); }")
-n_ini = 0
+# the Present button's Arabic label (round 3): "عرض تقديمي" is the noun "a presentation" - the name of the Presentation
+# app on the start page - on a button that starts the slide show; "بدء العرض" (start the show), the words of the
+# button's own tooltip in the editor's Arabic text (PE.Views.Statusbar.tipPreview)
+PRESENT_OLD = "var txt=(lang()==='en' ? 'Present' : 'عرض تقديمي');"
+PRESENT_NEW = "var txt=(lang()==='en' ? 'Present' : 'بدء العرض');"
+n_ini = n_present = 0
 for e in ("documenteditor", "spreadsheeteditor", "presentationeditor", "pdfeditor"):
     f = os.path.join(E, "web-apps", "apps", e, "main", "app.js")
     if os.path.exists(f):
         s = open(f, encoding="utf-8").read()
         s = s.replace(INI_OLD, INI_NEW)
         n_ini += INI_NEW in s
+        s = s.replace(PRESENT_OLD, PRESENT_NEW)
+        n_present += e == "presentationeditor" and PRESENT_NEW in s
         s = re.sub(r"\n?/\*XR-MAC-START\*/.*?/\*XR-MAC-END\*/\n?", "", s, flags=re.S)
         s = re.sub(r"\n?/\*XR-ACCT-START\*/.*?/\*XR-ACCT-END\*/\n?", "", s, flags=re.S)
         open(f, "w", encoding="utf-8").write(s.rstrip() + "\n" + MAC_JS + ACCT_JS + "\n")
 log("mac header shim (+ no first-run feature tips) + Xrero account appended to app.js; Arabic initials:", n_ini, "editors")
 if n_ini != 4:
     raise SystemExit("account chip initials: expected the four editors' app.js, changed %d" % n_ini)
+if n_present != 1:
+    raise SystemExit("Present button Arabic label: not found in the presentation editor's app.js")
+log("Present button: Arabic label 'بدء العرض'")
 
 # ---------------------------------------------------------------- start page
 login = os.path.join(RES, "login", "index.html")

@@ -14,7 +14,7 @@ shots: the app in the chosen interface language (the app's own setting, asc_user
        caret in its Arabic summary (the status bar and the ribbon show the Arabic paragraph), then (16 Nov 2026, the
        five-picture set) the other three demo files in the same window, each in its own tab:
          sheet  store_demo_sheet[_ar].xlsx - E5 selected (=SUM(B5:D5) in the formula bar), the column chart beside it
-         slide  store_demo_slides[_ar].pptx - a real click into slide 1's title, End: the caret after the title text
+         slide  store_demo_slides[_ar].pptx - a real click into slide 1's title, the caret then put after its text
          pdf    store_demo_form[_ar].pdf - the Comment tab, then the form filled in the app the way a user does it:
                 Tab to each field, type, Enter on the check boxes to tick (the file already carries the reviewer's
                 highlight, ink circle and sticky note); the caret is left in the Notes field
@@ -51,8 +51,11 @@ RECENTS = [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES[
 PDF_FILL = {"en": [("department", "Projects"), ("office", "Sharjah"), ("date", "24 Nov 2026"), ("attendees", "12"),
                    ("display", True), ("video", True), ("refreshments", False),
                    ("notes", "Q3 results review with the office teams")],
-            # (run 23: "24/11/2026" typed into the Arabic form's date field left it empty; an Arabic form writes the month)
-            "ar": [("department", "المشاريع"), ("office", "الشارقة"), ("date", "24 نوفمبر 2026"), ("attendees", "12"),
+            # (runs 23 + 24: "24/11/2026" and "24 نوفمبر 2026" typed into the Arabic form's date field left it empty,
+            # "12" in the next field stayed: the first spelling is typed letter by letter with the field's value logged
+            # after each, then the others are tried in turn - the first one the field keeps is the picture's)
+            "ar": [("department", "المشاريع"), ("office", "الشارقة"),
+                   ("date", ("24/11/2026", "24 نوفمبر 2026", "٢٤ نوفمبر ٢٠٢٦", "الاثنين 24 نوفمبر")), ("attendees", "12"),
                    ("display", True), ("video", True), ("refreshments", False),
                    ("notes", "مراجعة نتائج الربع الثالث مع فرق المكاتب")]}[LANG]
 PROC = 'tell application "System Events" to tell (first process whose bundle identifier is "%s")' % BID
@@ -341,7 +344,8 @@ SLIDE_POINT_JS = r"""(function(rtl){""" + FRAME + r"""var o={};
 SLIDE_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
   try{var p=api.WordControl.m_oLogicDocument;o.slide=p.CurPage;o.slides=p.Slides.length;
     var c=p.GetCurrentController&&p.GetCurrentController(),tc=c&&c.getTargetDocContent&&c.getTargetDocContent();
-    o.in_text=!!tc;if(tc){var cp=tc.GetCurrentParagraph&&tc.GetCurrentParagraph();o.paragraph=cp&&cp.GetText?cp.GetText().slice(0,60):'';}
+    o.in_text=!!tc;if(tc){var cp=tc.GetCurrentParagraph&&tc.GetCurrentParagraph();o.paragraph=cp&&cp.GetText?cp.GetText().slice(0,60):'';
+      o.at_end=tc.IsCursorAtEnd?tc.IsCursorAtEnd():'unknown';}
   }catch(e){o.err=''+e;}o.font=fontbox();o.statusbar=statusbar();return o;})()"""
 
 # the Comment tab (annotation tools) and a blank spot of the page's margin (gives the page the keyboard)
@@ -397,7 +401,9 @@ async def prep_slide(pg):
     if "x" in pt:
         await pg.click(pt["x"], pt["y"])
         await asyncio.sleep(1.5)
-        await pg.key(35, "End")                 # the caret after the title's last letter
+        # the caret after the title's last letter (run 23: the End key left it before the first one on macOS)
+        pt["end"] = await pg.ev("(function(){" + FRAME + "try{api.WordControl.m_oLogicDocument.MoveCursorToEndPos(false);"
+                                "return 'ok';}catch(e){return ''+e;}})()")
         await asyncio.sleep(1.5)
     o = await pg.ev(SLIDE_STATE_JS) or {}
     o["point"] = pt
@@ -412,6 +418,12 @@ async def prep_pdf(pg):
     if pre.get("focus"):
         await pg.click(*pre["focus"])
         await asyncio.sleep(1.5)
+    # the frame's errors while the form is filled (diagnosis of a field that does not keep what is typed)
+    await pg.ev("(function(){" + FRAME + "w.__xrErr=[];var ce=w.console.error;w.console.error=function(){try{w.__xrErr.push("
+                "[].slice.call(arguments).map(String).join(' ').slice(0,240));}catch(e){}return ce.apply(this,arguments);};"
+                "w.addEventListener('error',function(e){w.__xrErr.push('onerror: '+e.message);});return 1;})()")
+    active = "(function(){" + FRAME + ("try{var a=api.getPDFDoc().activeForm;return a?[a.GetFullName(),a.IsChecked?a.IsChecked():"
+                                       "a.GetValue()]:'';}catch(e){return ''+e;}})()")
     steps = []
     for name, v in PDF_FILL:                    # the form's tab order (store_demo.py PDF_FIELDS)
         await pg.key(9, "Tab")
@@ -419,15 +431,34 @@ async def prep_pdf(pg):
         if v is True:
             await pg.key(13, "Enter")
             await asyncio.sleep(1)
+        elif isinstance(v, tuple):              # spellings to try, the first one typed letter by letter
+            trace = []
+            for k, cand in enumerate(v):
+                if k == 0:
+                    for ch in cand:
+                        await pg.call("Input.insertText", {"text": ch})
+                        await asyncio.sleep(0.35)
+                        trace.append([ch, (await pg.ev(active) or ["", ""])[1]])
+                else:
+                    await pg.call("Input.insertText", {"text": cand})
+                    await asyncio.sleep(1)
+                got = (await pg.ev(active) or ["", ""])[1]
+                trace.append(["=> " + cand, got])
+                if got == cand:
+                    break
+                for _ in range(len(cand) + 4):  # clear what is there (Backspace), then the next spelling
+                    await pg.key(8, "Backspace")
+                    await asyncio.sleep(0.05)
+                await asyncio.sleep(0.6)
+            steps.append([name + " trace", trace])
         elif v:
             await pg.call("Input.insertText", {"text": v})
             await asyncio.sleep(1)
-        st = await pg.ev("(function(){" + FRAME + "try{var a=api.getPDFDoc().activeForm;return a?[a.GetFullName(),"
-                         "a.IsChecked?a.IsChecked():a.GetValue()]:'';}catch(e){return ''+e;}})()")
-        steps.append([name, st])
+        steps.append([name, await pg.ev(active)])
     await asyncio.sleep(1.5)
     o = await pg.ev(PDF_STATE_JS) or {}
     o["prep"], o["steps"] = pre, steps
+    o["errors"] = await pg.ev("(function(){" + FRAME + "return (w.__xrErr||[]).slice(0,30);})()")
     return o
 
 
@@ -685,11 +716,12 @@ if MODE == "shots":
             or (LANG == "ar" and si.get("formula_bidi") != "plaintext")):     # (patch_bundle.py XR-FBIDI)
         bad.append("spreadsheet picture (E5 =SUM, a chart, %s, rtl=%s): %s" % (FONT, LANG == "ar", si))
     sl = res.get("slide_info") or {}
-    if not sl.get("in_text") or sl.get("slide") != 0 or sl.get("slides") != 4 or sl.get("font") != FONT:
+    if not sl.get("in_text") or sl.get("at_end") is not True or sl.get("slide") != 0 or sl.get("slides") != 4 or sl.get("font") != FONT:
         bad.append("presentation picture (caret in slide 1's title, %s): %s" % (FONT, sl))
     pi = res.get("pdf_info") or {}
     got = {k: v for k, v in (pi.get("fields") or [])}
-    if (any(got.get(k) != v for k, v in PDF_FILL) or pi.get("active") != "notes" or len(pi.get("annots") or []) < 3
+    if (any((got.get(k) not in v) if isinstance(v, tuple) else (got.get(k) != v) for k, v in PDF_FILL)
+            or pi.get("active") != "notes" or len(pi.get("annots") or []) < 3
             or pi.get("tab") != "comment"):
         bad.append("PDF picture (form filled, caret in notes, 3 annotations, Comment tab): %s" % pi)
 if bad:

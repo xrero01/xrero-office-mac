@@ -16,7 +16,7 @@ TEXT = {
         "description": """Xrero Office is a free office suite for documents, spreadsheets and presentations - built Arabic-first, with editing that runs on your Mac.
 
 OPEN AND EDIT THE FILES YOU ALREADY HAVE
-- Documents (.docx), spreadsheets (.xlsx) and presentations (.pptx), plus PDF viewing
+- Documents (.docx), spreadsheets (.xlsx) and presentations (.pptx), plus PDF viewing, form filling and comments
 - Open from Finder, iCloud Drive, Downloads or email attachments
 - Save in the same format, ready to share with colleagues using other office apps
 
@@ -38,10 +38,10 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
         "promotionalText": "Free and Arabic-first: Documents, Spreadsheets, Presentations and PDF in one app. Open, edit and save Office files on your Mac.",
     },
     "ar-SA": {
-        "description": """أوفيس Xrero حزمة مكتبية مجانية للمستندات والجداول والعروض التقديمية، مصممة للعربية أولاً، والتحرير يتم على جهاز الماك نفسه.
+        "description": """أوفيس Xrero حزمة مكتبية مجانية للمستندات والجداول والعروض التقديمية، مصممة للعربية أولاً، والتحرير يتم على جهاز Mac نفسه.
 
 افتح ملفاتك وعدّلها
-- المستندات (.docx) والجداول (.xlsx) والعروض التقديمية (.pptx) وعرض ملفات PDF
+- المستندات (.docx) والجداول (.xlsx) والعروض التقديمية (.pptx)، وعرض ملفات PDF وتعبئة نماذجها والتعليق عليها
 - افتح من Finder أو iCloud Drive أو التنزيلات أو مرفقات البريد
 - احفظ بنفس الصيغة لتشاركها مع زملائك الذين يستخدمون برامج مكتبية أخرى
 
@@ -51,7 +51,7 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
 
 محرر كامل وليس مجرد عارض
 - أنماط النصوص والعناوين والقوائم والجداول والصور والألوان وتخطيط الصفحة
-- المعادلات وتنسيق الخلايا وأوراق العمل المتعددة
+- الصيغ وتنسيق الخلايا وأوراق العمل المتعددة
 - شرائح بتخطيطات وسمات وانتقالات
 - تبويبات: عدة مستندات مفتوحة في نافذة واحدة
 
@@ -60,7 +60,7 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
 - يعمل دون اتصال بالإنترنت بعد أول تسجيل دخول
 
 أوفيس Xrero برنامج مجاني ومفتوح المصدر (AGPL-3.0) مبني على ONLYOFFICE.""",
-        "promotionalText": "مجاني ومصمم للعربية أولاً: المستندات والجداول والعروض وPDF في تطبيق واحد. افتح ملفات أوفيس وعدّلها واحفظها على الماك.",
+        "promotionalText": "مجاني ومصمم للعربية أولاً: المستندات والجداول والعروض وملفات PDF في تطبيق واحد. افتح ملفات أوفيس وعدّلها واحفظها على جهاز Mac.",
     },
 }
 # the listing's order (16 Nov 2026 review): the Arabic + English document first (the app's point, and the picture search

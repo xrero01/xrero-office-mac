@@ -409,6 +409,30 @@ for f in glob.glob(os.path.join(E, "sdkjs-plugins", "*", "translations", "ar-SA.
 log("Arabic wording (word count, AI tab):", n_ar, "files")
 if n_ar < 2:
     raise SystemExit("Arabic wording: expected the documenteditor ar.json and the AI plugin, changed %d" % n_ar)
+# (16 Nov 2026, store pictures 3-5) the PDF editor's Arabic ribbon showed its Collaboration tab in English: the payload's
+# pdfeditor ar.json keeps "Collaboration" there; the document and presentation editors' Arabic text is "التعاون"
+n_pdf_ar = 0
+for f in glob.glob(os.path.join(E, "web-apps", "apps", "pdfeditor", "main", "locale", "ar.json")):
+    t = open(f, encoding="utf-8").read()
+    t2 = re.sub(r'("PDFE\.Views\.Toolbar\.textTabCollaboration"\s*:\s*)"Collaboration"', '\\1"التعاون"', t)
+    if t2 != t:
+        open(f, "w", encoding="utf-8").write(t2)
+        n_pdf_ar += 1
+log("Arabic wording (PDF editor Collaboration tab):", n_pdf_ar, "files")
+# the spreadsheet formula bar in the Arabic (right-to-left) interface took the interface's direction for a formula too:
+# "=SUM(B5:D5)" read "SUM(B5:D5)=". Each line now takes its direction from its own first letter (a formula left to
+# right, Arabic text right to left), still aligned to the right like the rest of the right-to-left bar
+FBIDI = ("/*XR-FBIDI*/.rtl #cell-editing-box .ce-group-content #ce-cell-content{unicode-bidi:plaintext;text-align:right}"
+         "/*XR-FBIDI-END*/")
+n_fb = 0
+for css in glob.glob(os.path.join(E, "web-apps", "apps", "spreadsheeteditor", "main", "resources", "css", "app.css")):
+    t = open(css, encoding="utf-8", errors="surrogateescape").read()
+    if "#ce-cell-content" in t and "/*XR-FBIDI*/" not in t:
+        open(css, "w", encoding="utf-8", errors="surrogateescape").write(t.rstrip() + "\n" + FBIDI + "\n")
+        n_fb += 1
+log("formula bar direction (right-to-left interface):", n_fb, "stylesheets")
+if n_fb != 1:
+    raise SystemExit("formula bar direction: expected the spreadsheeteditor app.css, changed %d" % n_fb)
 
 # Hide the Xrero header controls that call Windows-only native commands (PDF->Word converter, Designs dialog,
 # EN/AR switch = 'xrero:lang:*' relaunch handled only by the Windows shell, share) - on Mac they would be dead buttons.

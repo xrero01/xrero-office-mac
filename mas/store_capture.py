@@ -36,10 +36,10 @@ BID = "com.xrero.office"
 PORT = 9333
 CODE = {"en": "en-US", "ar": "ar-SA"}[LANG]
 HERE = os.path.dirname(os.path.abspath(__file__))
-# the names the pictures show (tab titles, Recent files); short enough for whole tab titles
-NAMES = {"en": dict(editor="Q3 report.docx", sheet="Projects 2026.xlsx", slide="Q3 review.pptx", pdf="Room request.pdf"),
-         "ar": dict(editor="التقرير الربعي.docx", sheet="المشاريع 2026.xlsx", slide="عرض الربع الثالث.pptx",
-                    pdf="طلب حجز قاعة.pdf")}[LANG]
+# the names the pictures show (tab titles, Recent files); short enough for whole tab titles (run 23: "Projects 2026.xlsx",
+# "*Room request.pdf", "عرض الربع الثالث.pptx" were cut to "...", and a name with digits read out of order right to left)
+NAMES = {"en": dict(editor="Q3 report.docx", sheet="Projects.xlsx", slide="Q3 review.pptx", pdf="Booking.pdf"),
+         "ar": dict(editor="التقرير الربعي.docx", sheet="المشاريع.xlsx", slide="الربع الثالث.pptx", pdf="حجز قاعة.pdf")}[LANG]
 DOC_NAME = NAMES["editor"]
 SUF = "_ar" if LANG == "ar" else ""
 DEMO = {"sheet": os.path.join(HERE, "store_demo_sheet%s.xlsx" % SUF), "slide": os.path.join(HERE, "store_demo_slides%s.pptx" % SUF),
@@ -51,7 +51,8 @@ RECENTS = [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES[
 PDF_FILL = {"en": [("department", "Projects"), ("office", "Sharjah"), ("date", "24 Nov 2026"), ("attendees", "12"),
                    ("display", True), ("video", True), ("refreshments", False),
                    ("notes", "Q3 results review with the office teams")],
-            "ar": [("department", "المشاريع"), ("office", "الشارقة"), ("date", "24/11/2026"), ("attendees", "12"),
+            # (run 23: "24/11/2026" typed into the Arabic form's date field left it empty; an Arabic form writes the month)
+            "ar": [("department", "المشاريع"), ("office", "الشارقة"), ("date", "24 نوفمبر 2026"), ("attendees", "12"),
                    ("display", True), ("video", True), ("refreshments", False),
                    ("notes", "مراجعة نتائج الربع الثالث مع فرق المكاتب")]}[LANG]
 PROC = 'tell application "System Events" to tell (first process whose bundle identifier is "%s")' % BID
@@ -66,7 +67,12 @@ def log(*a):
 
 
 def osa(*lines):
-    r = subprocess.run(["osascript"] + [a for l in lines for a in ("-e", l)], capture_output=True, text=True, timeout=30)
+    try:
+        r = subprocess.run(["osascript"] + [a for l in lines for a in ("-e", l)], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        # (run 23: "quit" waits on the app's "save changes?" question after the form was filled - ensure_quit goes on)
+        log("osascript timed out:", lines[0][:80])
+        return "timeout"
     return (r.stdout or r.stderr).strip()
 
 
@@ -316,8 +322,9 @@ SHEET_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
   try{var ws=api.wbModel.getActiveWs(),CH=w.AscDFH.historyitem_type_ChartSpace;
     var t=(ws.Drawings||[]).map(function(x){var g=x.graphicObject;return g&&g.getObjectType?g.getObjectType():-1;});
     o.charts=t.filter(function(v){return v===CH;}).length;o.drawings=t.length;o.sheet=ws.getName();
-    try{o.rtl=!!ws.getRightToLeft();}catch(e){o.rtl='unknown: '+e;}}catch(e){o.err=''+e;}
+    try{o.rtl=!!api.wb.getWorksheet().getRightToLeft();}catch(e){o.rtl='unknown: '+e;}}catch(e){o.err=''+e;}
   o.cell=(d.getElementById('ce-cell-name')||{}).value||'';o.formula=(d.getElementById('ce-cell-content')||{}).value||'';
+  var ce=d.getElementById('ce-cell-content');o.formula_bidi=ce?w.getComputedStyle(ce).unicodeBidi:'';
   o.font=fontbox();o.statusbar=statusbar();return o;})()"""
 
 # slide 1's title: its middle line, near the side the text starts from (the click lands on the title's text)
@@ -415,7 +422,8 @@ async def prep_pdf(pg):
         elif v:
             await pg.call("Input.insertText", {"text": v})
             await asyncio.sleep(1)
-        st = await pg.ev("(function(){" + FRAME + "try{var a=api.getPDFDoc().activeForm;return a?a.GetFullName():'';}catch(e){return ''+e;}})()")
+        st = await pg.ev("(function(){" + FRAME + "try{var a=api.getPDFDoc().activeForm;return a?[a.GetFullName(),"
+                         "a.IsChecked?a.IsChecked():a.GetValue()]:'';}catch(e){return ''+e;}})()")
         steps.append([name, st])
     await asyncio.sleep(1.5)
     o = await pg.ev(PDF_STATE_JS) or {}
@@ -673,7 +681,8 @@ if MODE == "shots":
             bad.append("%s: private data %s" % (k, priv.findall(json.dumps(v, ensure_ascii=False))[:5]))
     si = res.get("sheet_info") or {}
     if (si.get("cell") != "E5" or not str(si.get("formula", "")).upper().startswith("=SUM(") or (si.get("charts") or 0) < 1
-            or si.get("font") != FONT or si.get("rtl") is not (LANG == "ar")):
+            or si.get("font") != FONT or si.get("rtl") is not (LANG == "ar")
+            or (LANG == "ar" and si.get("formula_bidi") != "plaintext")):     # (patch_bundle.py XR-FBIDI)
         bad.append("spreadsheet picture (E5 =SUM, a chart, %s, rtl=%s): %s" % (FONT, LANG == "ar", si))
     sl = res.get("slide_info") or {}
     if not sl.get("in_text") or sl.get("slide") != 0 or sl.get("slides") != 4 or sl.get("font") != FONT:

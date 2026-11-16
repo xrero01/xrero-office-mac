@@ -200,7 +200,7 @@ SHEET = {
     "ar": dict(rtl=True, font=ARABIC, sheet="المشاريع", title="المشاريع المنجزة حسب المكتب · 2026",
                sub="عدد المشاريع المنجزة في كل ربع", head=("المكتب", "الربع الأول", "الربع الثاني", "الربع الثالث", "المجموع"),
                rows=(("دبي", 9, 11, 12), ("أبوظبي", 7, 8, 10), ("الشارقة", 3, 5, 7)), total="الإجمالي",
-               chart="المشاريع المنجزة حسب المكتب", widths=(13, 12, 12, 12, 11)),
+               chart="المشاريع المنجزة حسب المكتب", widths=(12, 11, 11, 11, 10)),
 }
 SERIES = ("0B3F4B", "0585A1", "8CCBD8")
 
@@ -257,7 +257,7 @@ def make_sheet(path, lang):
     # engine drew as an empty bar chart (local x2t preview, 16 Nov 2026)
     ch = BarChart()
     ch.add_data(Reference(ws, min_col=2, max_col=4, min_row=4, max_row=7), titles_from_data=True)
-    ch.width, ch.height = 11.6, 8.4
+    ch.width, ch.height = 11.0, 8.4       # (run 23: table + chart wider than the Arabic window - the chart's far side was cut)
     ws.add_chart(ch, "G3")
     wb.properties.creator = wb.properties.lastModifiedBy = "Xrero"
     wb.properties.title = c["chart"]
@@ -287,8 +287,9 @@ def make_sheet(path, lang):
 
 
 def chart_xml(c, vals):
-    """a clustered column chart of the table (B4:D7 by A5:A7) with its cached values; Arabic: categories from the
-    right (the value axis on the right), like the right-to-left sheet"""
+    """a clustered column chart of the table (B4:D7 by A5:A7) with its cached values. The category axis runs left to
+    right in both languages: reversed (maxMin, categories from the right) the editor drew the first category's label
+    turned on its side and dropped the others (run 23, Arabic picture; the local x2t preview showed the same)"""
     from xml.sax.saxutils import escape as e
     f, sh = c["font"], "'%s'" % c["sheet"]
 
@@ -341,7 +342,7 @@ def chart_xml(c, vals):
             '<a:ln w="9525"><a:solidFill><a:srgbClr val="D5E3E7"/></a:solidFill></a:ln></c:spPr>%s'
             '</c:chartSpace>') % (
         ' rtl="1"' if c["rtl"] else "", rpr("defRPr", 1300, True, "0B3F4B"), rpr("rPr", 1300, True, "0B3F4B"),
-        e(c["chart"]), ser, "maxMin" if c["rtl"] else "minMax", txpr(1000), "r" if c["rtl"] else "l", grid,
+        e(c["chart"]), ser, "minMax", txpr(1000), "l", grid,
         txpr(900, "5B6B70"), txpr(1000), txpr(1000))
 
 
@@ -406,6 +407,16 @@ def make_slides(path, lang):
             rPr = r._r.get_or_add_rPr()
             rPr.set("lang", "ar-AE" if rtl else "en-US")
             rPr.find(pq("a:latin")).addnext(parse_xml('<a:cs xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" typeface="%s"/>' % f))
+            # the paragraph's end mark carries the run's properties (language, face, size, bold) - the caret after the
+            # title's last letter sits on it: run 23's Arabic status bar showed the interface default "...السعودية"
+            # there instead of the text's ar-AE
+            import copy
+            old = p._p.find(pq("a:endParaRPr"))
+            if old is not None:
+                p._p.remove(old)
+            end = copy.deepcopy(rPr)
+            end.tag = pq("a:endParaRPr")
+            p._p.append(end)
 
     def shape(sl, kind, x, y, w, h, fill=None, alpha=None, line=None, line_w=None):
         s = sl.shapes.add_shape(kind, X(x, w), Inches(y), Inches(w), Inches(h))

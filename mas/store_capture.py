@@ -51,11 +51,10 @@ RECENTS = [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES[
 PDF_FILL = {"en": [("department", "Projects"), ("office", "Sharjah"), ("date", "24 Nov 2026"), ("attendees", "12"),
                    ("display", True), ("video", True), ("refreshments", False),
                    ("notes", "Q3 results review with the office teams")],
-            # (runs 23 + 24: "24/11/2026" and "24 نوفمبر 2026" typed into the Arabic form's date field left it empty,
-            # "12" in the next field stayed: the first spelling is typed letter by letter with the field's value logged
-            # after each, then the others are tried in turn - the first one the field keeps is the picture's)
-            "ar": [("department", "المشاريع"), ("office", "الشارقة"),
-                   ("date", ("24/11/2026", "24 نوفمبر 2026", "٢٤ نوفمبر ٢٠٢٦", "الاثنين 24 نوفمبر")), ("attendees", "12"),
+            # (runs 23-25: the Arabic form's date field drops the FIRST letter typed into it - run 25 typed "24/11/2026"
+            # letter by letter: "2" was lost, "4/11/2026" stayed; typed as one piece the whole piece was lost. prep_pdf
+            # types the missing start again at the field's start, as a user would - mas/store/NOTES.md)
+            "ar": [("department", "المشاريع"), ("office", "الشارقة"), ("date", "24/11/2026"), ("attendees", "12"),
                    ("display", True), ("video", True), ("refreshments", False),
                    ("notes", "مراجعة نتائج الربع الثالث مع فرق المكاتب")]}[LANG]
 PROC = 'tell application "System Events" to tell (first process whose bundle identifier is "%s")' % BID
@@ -423,37 +422,36 @@ async def prep_pdf(pg):
                 "[].slice.call(arguments).map(String).join(' ').slice(0,240));}catch(e){}return ce.apply(this,arguments);};"
                 "w.addEventListener('error',function(e){w.__xrErr.push('onerror: '+e.message);});return 1;})()")
     active = "(function(){" + FRAME + ("try{var a=api.getPDFDoc().activeForm;return a?[a.GetFullName(),a.IsChecked?a.IsChecked():"
-                                       "a.GetValue()]:'';}catch(e){return ''+e;}})()")
+                                       "a.GetValue(),a.IsInForm?a.IsInForm():'?']:'';}catch(e){return ''+e;}})()")
+    to_start = "(function(){" + FRAME + ("try{var a=api.getPDFDoc().activeForm;a.content.MoveCursorToStartPos();"
+                                         "a.content.RecalculateCurPos();return 'ok';}catch(e){return ''+e;}})()")
     steps = []
     for name, v in PDF_FILL:                    # the form's tab order (store_demo.py PDF_FIELDS)
         await pg.key(9, "Tab")
-        await asyncio.sleep(1.6)
+        st = None
+        for _ in range(20):                     # the field has the keyboard (active + in edit) before anything is typed
+            await asyncio.sleep(0.4)
+            st = await pg.ev(active) or ["", "", ""]
+            if st[0] == name and st[2] is True:
+                break
+        await asyncio.sleep(0.8)
         if v is True:
             await pg.key(13, "Enter")
             await asyncio.sleep(1)
-        elif isinstance(v, tuple):              # spellings to try, the first one typed letter by letter
-            trace = []
-            for k, cand in enumerate(v):
-                if k == 0:
-                    for ch in cand:
-                        await pg.call("Input.insertText", {"text": ch})
-                        await asyncio.sleep(0.35)
-                        trace.append([ch, (await pg.ev(active) or ["", ""])[1]])
-                else:
-                    await pg.call("Input.insertText", {"text": cand})
-                    await asyncio.sleep(1)
-                got = (await pg.ev(active) or ["", ""])[1]
-                trace.append(["=> " + cand, got])
-                if got == cand:
-                    break
-                for _ in range(len(cand) + 4):  # clear what is there (Backspace), then the next spelling
-                    await pg.key(8, "Backspace")
-                    await asyncio.sleep(0.05)
-                await asyncio.sleep(0.6)
-            steps.append([name + " trace", trace])
         elif v:
             await pg.call("Input.insertText", {"text": v})
             await asyncio.sleep(1)
+            got = (await pg.ev(active) or ["", ""])[1]
+            if got != v and got and v.endswith(got):
+                # the first letter(s) did not arrive (runs 23-25, Arabic date): typed again at the field's start
+                steps.append([name + " retyped start", [got, v[:len(v) - len(got)], await pg.ev(to_start)]])
+                await asyncio.sleep(0.5)
+                await pg.call("Input.insertText", {"text": v[:len(v) - len(got)]})
+                await asyncio.sleep(1)
+            elif got != v and not got:
+                steps.append([name + " typed again", got])
+                await pg.call("Input.insertText", {"text": v})
+                await asyncio.sleep(1)
         steps.append([name, await pg.ev(active)])
     await asyncio.sleep(1.5)
     o = await pg.ev(PDF_STATE_JS) or {}
@@ -720,8 +718,7 @@ if MODE == "shots":
         bad.append("presentation picture (caret in slide 1's title, %s): %s" % (FONT, sl))
     pi = res.get("pdf_info") or {}
     got = {k: v for k, v in (pi.get("fields") or [])}
-    if (any((got.get(k) not in v) if isinstance(v, tuple) else (got.get(k) != v) for k, v in PDF_FILL)
-            or pi.get("active") != "notes" or len(pi.get("annots") or []) < 3
+    if (any(got.get(k) != v for k, v in PDF_FILL) or pi.get("active") != "notes" or len(pi.get("annots") or []) < 3
             or pi.get("tab") != "comment"):
         bad.append("PDF picture (form filled, caret in notes, 3 annotations, Comment tab): %s" % pi)
 if bad:

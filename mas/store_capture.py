@@ -354,6 +354,7 @@ async def page_shot_2x(pg, name, rest=None, caret=False):
     for n in range(3 if caret else 1):
         if caret:
             held = await pg.ev(caret_js("hold", name)) or {}
+            held["paint"] = await pg.ev(FRAME_PAINT_JS)
             await asyncio.sleep(0.2)
         r = await pg.call("Page.captureScreenshot", {"format": "png"})
         on = base64.b64decode(r["result"]["data"]) if r.get("result", {}).get("data") else None
@@ -362,13 +363,14 @@ async def page_shot_2x(pg, name, rest=None, caret=False):
         st = await pg.ev(caret_js("off", name)) or {}
         held["off"] = st.get("caret")
         held["at_capture"] = {k: v for k, v in st.items() if k != "caret"}
+        held["paint_off"] = await pg.ev(FRAME_PAINT_JS)
         await asyncio.sleep(0.3)
         proof = await pg.call("Page.captureScreenshot", {"format": "png"})
         await pg.ev(caret_js("release", name))
         off = base64.b64decode(proof["result"]["data"]) if proof.get("result", {}).get("data") else None
         if on and off and isinstance(held.get("rect"), list):
             held["drawn"] = caret_drawn(on, off, held["rect"])
-        tries.append({k: held.get(k) for k in ("caret", "rect", "drawn", "at_capture")})
+        tries.append({k: held.get(k) for k in ("caret", "rect", "drawn", "at_capture", "paint", "paint_off")})
         if isinstance(held.get("drawn"), (int, float)) and held["drawn"] >= 40:
             break
         await asyncio.sleep(1)
@@ -633,6 +635,12 @@ HIGHLIGHT, TEXT_NOTE, INK = 8, 0, 14          # AscPDF.ANNOTATIONS_TYPES (sdkjs 
 # the blink are its only callers). While held, a hide is now recorded (the caller, for the evidence) and not done; the
 # capture then checks that the editor still wants that caret right after the picture (NeedTarget, no selection in the
 # document, the Notes field still in edit in the PDF) - the picture shows a caret only where the editor has one.
+# Run 37 found the cause: every recorded hide came from the editor's ORIGINAL blink function, and the presentation
+# caret (no showTarget to guard) still blinked. This script's JavaScript runs in the top page, so its clearInterval /
+# setInterval used the top window's timers, while the editor's blink timer lives in the editor frame's window (timer
+# ids are per window): the hold never stopped the blink - not in this round and not before (earlier pictures caught
+# the caret when the blink happened to be on). The timers are now the frame's own (w.clearInterval /
+# w.setInterval), and each capture waits until the frame has painted the change (FRAME_PAINT_JS).
 CARET_JS = r"""(function(op,tag){""" + FRAME + r"""var dd=null;
   try{dd=(api.WordControl&&api.WordControl.m_oDrawingDocument)||null;}catch(e){}
   try{if((!dd||!dd.TargetHtmlElement)&&api.getPDFDoc)dd=api.getPDFDoc().GetDrawingDocument();}catch(e){}
@@ -643,7 +651,7 @@ CARET_JS = r"""(function(op,tag){""" + FRAME + r"""var dd=null;
   function unwrap(){if(dd.__xrST){dd.showTarget=dd.__xrST;dd.__xrST=null;}}
   if(op==='release'){unwrap();if(!dd.__xrDT)return {caret:'released'};
     dd.DrawTarget=dd.__xrDT;dd.__xrDT=null;var run=dd.m_lTimerTargetId!=-1;
-    if(run){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
+    if(run){w.clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
     if((run||dd.__xrRun)&&dd.TargetStart)dd.TargetStart(true);return {caret:'released'};}
   if(op==='off'){var st={need:!!dd.NeedTarget,vis:w.getComputedStyle(el).visibility+'/'+w.getComputedStyle(el).display,hides:dd.__xrHides||[]};
     // (run 36) the editor's own state right after the picture: it still wants this caret
@@ -652,12 +660,12 @@ CARET_JS = r"""(function(op,tag){""" + FRAME + r"""var dd=null;
     unwrap();
     if(!dd.__xrDT){dd.__xrDT=dd.DrawTarget;dd.__xrRun=dd.m_lTimerTargetId!=-1;}
     dd.DrawTarget=function(){show(false);};
-    if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
+    if(dd.m_lTimerTargetId!=-1){w.clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=-1;}
     show(false);var c0=w.getComputedStyle(el);st.caret='off: '+c0.display+'/'+c0.visibility;return st;}
   if(!dd.NeedTarget)return {caret:'no caret wanted'};
   if(!dd.__xrDT){dd.__xrDT=dd.DrawTarget;dd.__xrRun=dd.m_lTimerTargetId!=-1;}
   dd.DrawTarget=function(){show(true);};
-  if(dd.m_lTimerTargetId!=-1){clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=setInterval(dd.DrawTarget,500);}
+  if(dd.m_lTimerTargetId!=-1){w.clearInterval(dd.m_lTimerTargetId);dd.m_lTimerTargetId=w.setInterval(dd.DrawTarget,500);}
   if(dd.showTarget&&!dd.__xrST){dd.__xrST=dd.showTarget;dd.__xrHides=[];var own=dd.__xrST;
     dd.showTarget=function(v){if(!v){dd.__xrHides.push(String((new Error()).stack||'').split('\n').slice(2,5)
       .map(function(l){return l.trim().replace(/^at /,'').replace(/\(.*\//,'(').slice(0,90);}).join(' < '));v=true;}
@@ -674,6 +682,14 @@ CARET_JS = r"""(function(op,tag){""" + FRAME + r"""var dd=null;
     o.where=box({left:cv.left+a.X,top:cv.top+a.Y,right:cv.left+z.X,bottom:cv.top+z.Y});
     o.para=(p.GetText?p.GetText():'').replace(/^\s+/,'').slice(0,6);}catch(e){o.where='error: '+e;}
   return o;})(__OP__,__TAG__)"""
+
+
+# (run 37) resolves once the editor frame has painted twice since the call (its own requestAnimationFrame), so a
+# capture taken after it shows the caret change just made; "timeout" after 1.5 s (a frame that paints nothing)
+FRAME_PAINT_JS = r"""(function(){var f=document.querySelector('iframe[name=frameEditor]');var w=f&&f.contentWindow||window;
+  return new Promise(function(ok){var done=false;function fin(v){if(!done){done=true;ok(v);}}
+    w.requestAnimationFrame(function(){w.requestAnimationFrame(function(){fin('painted');});});
+    setTimeout(function(){fin('timeout');},1500);});})()"""
 
 
 def caret_js(op, tag=""):
@@ -1314,6 +1330,7 @@ async def main():
                         res["pdf_at_capture"] = await pg.ev(PDF_SAVED_JS)
                     if caret:
                         await pg.ev(caret_js("hold", tag))
+                        await pg.ev(FRAME_PAINT_JS)
                     screen_shot(tag, box)
                     if caret:
                         await pg.ev(caret_js("release", tag))

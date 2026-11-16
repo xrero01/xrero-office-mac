@@ -15,9 +15,12 @@ shots: the app in the chosen interface language (the app's own setting, asc_user
        five-picture set) the other three demo files in the same window, each in its own tab:
          sheet  store_demo_sheet[_ar].xlsx - E5 selected (=SUM(B5:D5) in the formula bar), the column chart beside it
          slide  store_demo_slides[_ar].pptx - a real click into slide 1's title, the caret then put after its text
-         pdf    store_demo_form[_ar].pdf - the Comment tab, then the form filled in the app the way a user does it:
-                Tab to each field, type, Enter on the check boxes to tick (the file already carries the reviewer's
-                highlight, ink circle and sticky note); the caret is left in the Notes field
+         pdf    store_demo_form[_ar].pdf - the Comment tab, then the reviewer's marks made with its tools (16 Nov
+                2026: the deadline line selected with the mouse + Highlight, a circle drawn with the red pen around
+                the date field, a sticky note added with right click > Add comment beside it), then the form filled
+                the way a user does it: Tab to each field, type, Enter on the check boxes to tick; the caret is left
+                in the Notes field. After the pictures the form is saved (Cmd+S), read back from the file and opened
+                again in the app (pdf_roundtrip: the store text may say "form filling and comments" only if it holds)
        Each picture is written twice:
          <lang>-<name>-window.png  the window as the screen shows it (screencapture, 1x on the CI display)
          <lang>-<name>-page2x.png  the same page drawn by the app at Retina scale (DevTools, device scale 2)
@@ -25,8 +28,12 @@ audit: first run in a fresh container: what a user sees in the first seconds and
        (Word, spreadsheet, presentation, PDF): tip balloons, dialogs, extra windows -> audit-*.png + capture-audit.json.
 switch: after audit, the same container relaunched in the other language (what a user does in Settings > Interface
        language): the start page must follow it (direction, account pill on the far side, not over the sidebar).
+Window size (16 Nov 2026 review): the spreadsheet and presentation ribbons folded groups into "More" at the 1024 pt
+       window and left a gap beside it. audit (en) and switch (ar) measure, in the spreadsheet and presentation editors,
+       the narrowest window width at which nothing is folded (ribbon-fit.json); shots then takes ALL ten pictures at
+       that one width (WIN_H high) - mas/hidpi.swift gives the CI display a 1600 x 1200 mode for it.
 """
-import asyncio, base64, json, os, plistlib, shutil, subprocess, sys, time
+import asyncio, base64, json, os, plistlib, re, shutil, subprocess, sys, time
 import aiohttp
 
 APP, MODE, LANG, OUT, SRC = sys.argv[1:6]
@@ -45,6 +52,16 @@ SUF = "_ar" if LANG == "ar" else ""
 DEMO = {"sheet": os.path.join(HERE, "store_demo_sheet%s.xlsx" % SUF), "slide": os.path.join(HERE, "store_demo_slides%s.pptx" % SUF),
         "pdf": os.path.join(HERE, "store_demo_form%s.pdf" % SUF)}
 FONT = "Geeza Pro" if LANG == "ar" else "Helvetica Neue"      # the demo files' face (store_demo.py)
+# the signed-in account the pictures show: a team, not a person (16 Nov 2026 review: "Xrero Office" read as a product
+# badge, not an account); its initials are on the start page pill and the editors' account chip
+ACCOUNT = {"en": ("Projects team", "PT"), "ar": ("فريق المشاريع", "فم")}[LANG]
+# the window of all ten pictures: its width comes from ribbon-fit.json (picture_width), its height is fixed
+WIN_H = 800
+RIBBON_FIT = os.path.join(OUT, "ribbon-fit.json")
+# the sticky note the capture adds beside the date field (the PDF picture)
+PDF_NOTE = {"en": "The main room is free on this date.", "ar": "القاعة الكبرى متاحة في هذا التاريخ."}[LANG]
+# the Recent files' times on the start picture: working hours, newest first (run 27 showed the CI's 03:31-03:36)
+RECENT_TIMES = ["10:40", "10:31", "10:22", "10:15"]
 # the Recent files of the start picture: the four demo files of the pictures, opened oldest first
 RECENTS = [(NAMES["pdf"], DEMO["pdf"]), (NAMES["slide"], DEMO["slide"]), (NAMES["sheet"], DEMO["sheet"]), (DOC_NAME, "DEMO")]
 # the PDF form as the capture fills it in (store_demo.py PDF_FIELDS order = the form's tab order); True = tick (Enter)
@@ -101,9 +118,32 @@ def visible_frame():
         return 0, 25, 1920, 1055, 1.0
 
 
+WIN = None          # shots: (width, height) of every picture's window; audit / switch: the whole visible frame
+
+
+def picture_width(vis_w):
+    """the pictures' window width: the widest of the ribbon-fit widths measured by audit (en) and switch (ar) in the
+    spreadsheet and presentation editors (no ribbon group folded into "More"), else 1280; within 1024 .. the screen"""
+    try:
+        fit = json.load(open(RIBBON_FIT, encoding="utf-8"))
+    except Exception:
+        fit = {}
+    got = [(lang, tag, v) for lang, d in fit.items() for tag, v in d.items()]
+    if {(l, t) for l, t, _ in got} >= {("en", "sheet"), ("en", "slide"), ("ar", "sheet"), ("ar", "slide")}:
+        w = max(v if isinstance(v, int) else vis_w for _, _, v in got)
+        src = "ribbon-fit %s" % fit
+    else:
+        w, src = 1280, "default (ribbon-fit incomplete: %s)" % fit
+    w = max(1024, min(vis_w, w))
+    log("picture window width", w, "-", src)
+    return w
+
+
 def place_window():
     osa('tell application id "%s" to activate' % BID)
     x, y, w, h, sc = visible_frame()
+    if WIN:
+        w, h = min(w, WIN[0]), min(h, WIN[1])
     osa(PROC + ' to set position of window 1 to {%d, %d}' % (x, y), PROC + ' to set size of window 1 to {%d, %d}' % (w, h))
     time.sleep(1.5)
     b = osa(PROC + ' to get {position, size} of window 1')
@@ -143,10 +183,30 @@ class Page:
         for t in ("mousePressed", "mouseReleased"):
             await self.call("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": "left", "clickCount": 1})
 
-    async def key(self, code, name):
+    async def key(self, code, name, mods=0):
+        k = name[-1].lower() if name.startswith("Key") else name
         for t in ("rawKeyDown", "keyUp"):
             await self.call("Input.dispatchKeyEvent", {"type": t, "windowsVirtualKeyCode": code, "nativeVirtualKeyCode": code,
-                                                       "code": name, "key": name})
+                                                       "code": name, "key": k, "modifiers": mods})
+
+    async def drag(self, pts):
+        """a left-button drag through the points (page coordinates), as a mouse does it"""
+        x, y = pts[0]
+        await self.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        await self.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "left", "buttons": 1,
+                                                     "clickCount": 1})
+        for x, y in pts[1:]:
+            await self.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y, "button": "left", "buttons": 1})
+            await asyncio.sleep(0.015)
+        await self.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "left", "buttons": 0,
+                                                     "clickCount": 1})
+
+    async def right_click(self, x, y):
+        await self.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
+        await self.call("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "right", "buttons": 2,
+                                                     "clickCount": 1})
+        await self.call("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "right", "buttons": 0,
+                                                     "clickCount": 1})
 
 
 TIPS_JS = """(function(){var f=document.querySelector('iframe[name=frameEditor]');var docs=[document];
@@ -160,10 +220,12 @@ TIPS_JS = """(function(){var f=document.querySelector('iframe[name=frameEditor]'
   return {shim:!!((f&&f.contentWindow)||window).__xrNoFeatureTips, tips:tips, dialogs:dlgs, url:location.search.slice(0,160)};})()"""
 
 # the stored state of a signed-in user (what the account card writes after a sign-in) - local only, no server account;
-# the name "Xrero Office" -> initials "XO" on the editors' account chip (a lone "X" there read as a close button)
+# the name is a team, not a person (ACCOUNT: "Projects team" -> "PT"; "فريق المشاريع" -> "فم", the article skipped -
+# web/xr-account.js initials)
 SESSION_JS = """new Promise(function(done){try{
   if(!localStorage.getItem('xr-acct-token')){localStorage.setItem('xr-acct-token','local-store-pictures');
-    localStorage.setItem('xr-acct',JSON.stringify({locked:false,name:'Xrero Office',email:'preview@example.invalid'}));}
+    localStorage.setItem('xr-acct',JSON.stringify({locked:false,name:__NAME__,email:'preview@example.invalid'}));}""".replace(
+    "__NAME__", json.dumps(ACCOUNT[0])) + """
   var o=document.getElementById('xr-acct-ov'); if(o) o.parentNode.removeChild(o);}catch(e){done('error: '+e);return;}
   setTimeout(function(){done(document.getElementById('xr-acct-ov')?'card came back':'open');},2500);})"""
 
@@ -180,6 +242,10 @@ START_JS = """(function(){var its=[].slice.call(document.querySelectorAll('#area
     recents:[].slice.call(document.querySelectorAll('#box-recent .file-list-body .row')).filter(vis).map(function(e){
       var n=e.querySelector('.col-name'), i=e.querySelector('.col-name svg.icon');
       return ((n&&n.innerText)||'').replace(/\\s+/g,' ').trim()+' ['+(i?getComputedStyle(i).backgroundImage.slice(0,26):'')+']';}),
+    dates:[].slice.call(document.querySelectorAll('#box-recent .file-list-body .row')).filter(vis).map(function(e){
+      var t=e.querySelector('.col-date');return ((t&&t.innerText)||'').trim();}),
+    date_head:((document.querySelector('#box-recent .file-list-head .col-date')||document.querySelector('#box-recent .col-date')||{}).innerText||'').trim(),
+    cards_bg:its.map(function(e){return getComputedStyle(e,'::before').backgroundImage.slice(27,60);}), xr_ar:document.documentElement.classList.contains('xr-ar'),
     latin_ui:latin(), wall:!!document.getElementById('xr-acct-ov')};
   function vis(e){var s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}
   function latin(){var out=[],w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT),n;
@@ -364,6 +430,7 @@ PDF_PREP_JS = r"""(function(){""" + FRAME + r"""var o={};
   try{var v=api.getDocumentRenderer(),det=v.getPageLikeDetector(0),rp=w.AscCommon.AscBrowser.retinaPixelRatio||1;
     var cv=v.canvas.getBoundingClientRect(),W=v.file.pages[0].W,pl=cv.left+det.x/rp,pt=cv.top+det.y/rp,sc=(det.w/rp)/W;
     o.page=[pl,pt,det.w/rp,det.h/rp].map(Math.round);o.px_per_pt=sc;o.focus=[fr.left+pl+24*sc,fr.top+pt+118*sc];
+    o.org=[fr.left+pl,fr.top+pt];
   }catch(e){o.err=''+e;}return o;})()"""
 PDF_STATE_JS = r"""(function(){""" + FRAME + r"""var o={};
   try{var doc=api.getPDFDoc();
@@ -384,8 +451,37 @@ UI_JS = r"""(function(){""" + FRAME + r"""
       if(!t||!e||e.closest('script,style,svg,noscript')||!vis(e))continue;
       all.push(t);if(/[A-Za-z]{2,}/.test(t))latin.push(t.slice(0,60));}});
   var inputs=[].slice.call(d.querySelectorAll('input,textarea')).filter(vis).map(function(i){return i.value;}).filter(String);
-  return {latin:latin,inputs:inputs,text:all.join(' | ').slice(0,6000)};})()"""
+  var chip=d.getElementById('xr-b-acct');
+  return {latin:latin,inputs:inputs,text:all.join(' | ').slice(0,6000),chip:chip?chip.textContent:null};})()"""
 
+
+# a visible control of the editor frame by CSS selector: its centre (page coordinates, for CDP input), pressed or not;
+# on a split button its main part (not the arrow)
+CTRL_JS = r"""(function(sel){""" + FRAME + r"""
+  function vis(e){var s=w.getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}
+  var es=[].slice.call(d.querySelectorAll(sel)).filter(vis);if(!es.length)return null;var e=es[0];
+  if(['BUTTON','TEXTAREA','A','INPUT'].indexOf(e.tagName)<0){var b=e.querySelector('button:not(.dropdown-toggle)')||e.querySelector('button');if(b)e=b;}
+  var r=e.getBoundingClientRect();
+  return {x:fr.left+r.left+r.width/2,y:fr.top+r.top+r.height/2,on:/(^|\s)active(\s|$)/.test(e.className||''),
+    cls:(e.className||'').toString().slice(0,60)};})(__SEL__)"""
+# the page's context menu: its "Add comment" item (the PDF editor's own menu item object, else the item with its caption)
+ADD_COMMENT_JS = r"""(function(){""" + FRAME + r"""
+  function vis(e){var s=w.getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}
+  var it=null;try{it=w.PDFE.getController('DocumentHolder').documentHolder.menuAddComment;}catch(e){}
+  var a=it&&it.cmpEl&&it.cmpEl[0];a=a&&(a.querySelector('a')||a);var cap=(it&&it.caption)||'';
+  if(!a||!vis(a))a=[].slice.call(d.querySelectorAll('.dropdown-menu li a')).filter(function(x){
+    return vis(x)&&cap&&(x.innerText||'').trim()===cap;})[0];
+  if(!a)return {err:'no visible Add comment item',caption:cap,menus:[].slice.call(d.querySelectorAll('.dropdown-menu')).filter(vis)
+    .map(function(m){return (m.innerText||'').replace(/\s+/g,' ').slice(0,160);})};
+  var r=a.getBoundingClientRect();return {x:fr.left+r.left+r.width/2,y:fr.top+r.top+r.height/2,text:(a.innerText||'').trim()};})()"""
+# the PDF's text selection (after the mouse drag) and its annotations: [type, rect (points), contents]
+PDF_SEL_JS = r"""(function(){""" + FRAME + r"""var o={};try{var f=api.getDocumentRenderer().file;o.quads=f.getSelectionQuads().length;
+  try{o.text=(f.copy()||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,120);}catch(e){o.text='?';}}catch(e){o.err=''+e;}
+  return o;})()"""
+PDF_ANNOTS_JS = r"""(function(){""" + FRAME + r"""try{return api.getPDFDoc().annots.map(function(a){var r=[];try{r=a.GetRect();}catch(e){}
+  return [a.GetType(),(r||[]).map(function(v){return Math.round(v);}),String((a.GetContents&&a.GetContents())||'').slice(0,60)];});
+  }catch(e){return 'error: '+e;}})()"""
+HIGHLIGHT, TEXT_NOTE, INK = 8, 0, 14          # AscPDF.ANNOTATIONS_TYPES (sdkjs pdf/src/defines.js)
 
 # the caret: its blink timer paused and the caret shown for a capture (hold), then the timer started again (release);
 # only where the editor wants a caret (NeedTarget) - the caret the picture shows is the editor's own, at its place
@@ -450,11 +546,118 @@ async def prep_slide(pg):
     return o
 
 
+def pdf_marks():
+    """where the reviewer's marks go, in PDF points of the demo form (read with PyMuPDF): the deadline line (its words,
+    selected from the line's start to its end), the pen circle around the date field, the sticky note's corner between
+    the date label and the field (the places store_demo.py used for the marks it stored before 16 Nov 2026)"""
+    import math
+    try:
+        import pymupdf
+    except ImportError:
+        import fitz as pymupdf
+    d = pymupdf.open(DEMO["pdf"])
+    pg = d[0]
+    W, rtl = pg.rect.width, LANG == "ar"
+    clip = pymupdf.Rect(W - 545, 350, W - 50, 368) if rtl else pymupdf.Rect(50, 350, 545, 368)
+    words = pg.get_text("words", clip=clip)
+    box = pymupdf.Rect(words[0][:4])
+    for wd in words[1:]:
+        box |= pymupdf.Rect(wd[:4])
+    dr = [pymupdf.Rect(w.rect) for w in pg.widgets() if w.field_name == "date"][0]
+    d.close()
+    cx, cy, rx, ry = (dr.x0 + dr.x1) / 2, (dr.y0 + dr.y1) / 2, dr.width / 2 + 9, dr.height / 2 + 8
+    ring = [(cx + rx * (1 + 0.03 * math.sin(3 * t)) * math.cos(t), cy + ry * (1 + 0.05 * math.cos(2 * t)) * math.sin(t))
+            for t in [-2.7 + k * (2 * math.pi + 0.5) / 60 for k in range(61)]]
+    y = (box.y0 + box.y1) / 2
+    a, b = (box.x1 - 0.4, box.x0 + 0.4) if rtl else (box.x0 + 0.4, box.x1 - 0.4)
+    line = [(a + (b - a) * k / 16.0, y) for k in range(17)]
+    note = (dr.x1 + 12, dr.y0 + 2) if rtl else (dr.x0 - 32, dr.y0 + 2)
+    return {"line": line, "ring": ring, "note": note, "box": [round(v, 1) for v in box], "date": [round(v, 1) for v in dr]}
+
+
+async def ctrl(pg, sel):
+    return await pg.ev(CTRL_JS.replace("__SEL__", json.dumps(sel)))
+
+
+async def prep_marks(pg, pre):
+    """the reviewer's marks, made with the Comment tab's tools the way a user makes them (16 Nov 2026 review: they were
+    stored in the demo file): the deadline line selected with the mouse and highlighted (Highlight button), a circle
+    drawn around the date field with the red pen, a sticky note added beside it (right click > Add comment, typed, Add)"""
+    o = {}
+    try:
+        m = pdf_marks()
+    except Exception as e:
+        return {"err": "marks: %s" % e}
+    org, sc = pre.get("org"), pre.get("px_per_pt")
+    if not org or not sc:
+        return {"err": "no page geometry", "pre": pre}
+
+    def P(x, y):
+        return (org[0] + x * sc, org[1] + y * sc)
+    o["marks"] = {"box": m["box"], "date": m["date"], "note": m["note"]}
+    # 1. highlight: select the line with the mouse (the Select tool), then the Highlight button
+    await pg.drag([P(*q) for q in m["line"]])
+    await asyncio.sleep(1.2)
+    o["selection"] = await pg.ev(PDF_SEL_JS)
+    b = await ctrl(pg, "#id-toolbar-btn-highlight")
+    o["highlight_button"] = b
+    if b:
+        await pg.click(b["x"], b["y"])
+        await asyncio.sleep(1.5)
+        b2 = await ctrl(pg, "#id-toolbar-btn-highlight")
+        if b2 and b2.get("on"):                  # (the marker stays switched on after use: switched off as a user does)
+            await pg.click(b2["x"], b2["y"])
+            await asyncio.sleep(1)
+            o["highlight_button_off"] = await ctrl(pg, "#id-toolbar-btn-highlight")
+    # 2. the red pen (the Comment tab's second pen): a circle around the date field, then the pen switched off
+    pen = await ctrl(pg, "#slot-btn-draw-pen-1")
+    o["pen_button"] = pen
+    if pen:
+        await pg.click(pen["x"], pen["y"])
+        await asyncio.sleep(1)
+        await pg.drag([P(*q) for q in m["ring"]])
+        await asyncio.sleep(1.5)
+        pen2 = await ctrl(pg, "#slot-btn-draw-pen-1")
+        if pen2 and pen2.get("on"):
+            await pg.click(pen2["x"], pen2["y"])
+            await asyncio.sleep(1.2)
+        o["pen_button_off"] = await ctrl(pg, "#slot-btn-draw-pen-1")
+    # 3. the sticky note: right click beside the date field > Add comment, the note typed, Add
+    x, y = P(*m["note"])
+    await pg.right_click(x, y)
+    await asyncio.sleep(1.5)
+    item = await pg.ev(ADD_COMMENT_JS) or {}
+    o["menu_item"] = item
+    if "x" in item:
+        await pg.click(item["x"], item["y"])
+        await asyncio.sleep(2)
+        ta = await ctrl(pg, "#id-popover textarea")
+        o["note_box"] = ta
+        if ta:
+            await pg.click(ta["x"], ta["y"])
+            await asyncio.sleep(0.5)
+            await pg.call("Input.insertText", {"text": PDF_NOTE})
+            await asyncio.sleep(0.8)
+            add = await ctrl(pg, "#id-popover #id-comments-change-popover")
+            o["add_button"] = add
+            if add:
+                await pg.click(add["x"], add["y"])
+                await asyncio.sleep(2)
+    else:
+        await pg.key(27, "Escape")
+        await asyncio.sleep(1)
+    o["annots"] = await pg.ev(PDF_ANNOTS_JS)
+    return o
+
+
 async def prep_pdf(pg):
     pre = await pg.ev(PDF_PREP_JS) or {}
     if pre.get("tab"):
         await pg.click(*pre["tab"])
         await asyncio.sleep(2)
+        pre = await pg.ev(PDF_PREP_JS) or pre          # (the page's place once the Comment tab's ribbon is shown)
+    marks = await prep_marks(pg, pre)
+    log("pdf marks:", json.dumps(marks, ensure_ascii=False)[:1500])
     if pre.get("focus"):
         await pg.click(*pre["focus"])
         await asyncio.sleep(1.5)
@@ -496,20 +699,139 @@ async def prep_pdf(pg):
         steps.append([name, await pg.ev(active)])
     await asyncio.sleep(1.5)
     o = await pg.ev(PDF_STATE_JS) or {}
-    o["prep"], o["steps"] = pre, steps
+    o["prep"], o["steps"], o["marks"] = pre, steps, marks
+    o["annots_full"] = await pg.ev(PDF_ANNOTS_JS)
+    o["popover"] = await ctrl(pg, "#id-popover")
     o["errors"] = await pg.ev("(function(){" + FRAME + "return (w.__xrErr||[]).slice(0,30);})()")
     return o
 
 
 PREP = {"sheet": prep_sheet, "slide": prep_slide, "pdf": prep_pdf}
 
+# the ribbon of the active toolbar tab: groups folded into "More" (its button shown) or not
+MORE_JS = r"""(function(){""" + FRAME + r"""
+  function vis(e){var s=w.getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0;}
+  var t=d.querySelector('.ribtab.active a');
+  return {more:[].slice.call(d.querySelectorAll('.more-box')).some(vis),tab:t?t.getAttribute('data-tab'):'',width:w.innerWidth};})()"""
+
+
+async def ribbon_fit(pg, tag):
+    """the narrowest window width (32 pt steps, 1024 .. the screen) from which on this editor's ribbon folds nothing into
+    "More" -> ribbon-fit.json {lang: {sheet|slide: width or null}} (picture_width reads it)"""
+    x, y, vw, vh, sc = visible_frame()
+    seen = {}
+    for wd in range(1024, vw + 1, 32):
+        osa(PROC + ' to set size of window 1 to {%d, %d}' % (wd, min(vh, WIN_H)))
+        await asyncio.sleep(1.6)
+        seen[wd] = (await pg.ev(MORE_JS) or {}).get("more")
+    ws = sorted(seen)
+    fit = next((wd for i, wd in enumerate(ws) if all(seen[v] is False for v in ws[i:])), None)
+    try:
+        allfit = json.load(open(RIBBON_FIT, encoding="utf-8"))
+    except Exception:
+        allfit = {}
+    allfit.setdefault(LANG, {})[{"cell": "sheet"}.get(tag, tag)] = fit
+    json.dump(allfit, open(RIBBON_FIT, "w", encoding="utf-8"), indent=1)
+    log("ribbon fit", LANG, tag, fit, "(More shown at: %s)" % [wd for wd in ws if seen[wd]])
+    res.setdefault("ribbon_fit", {})[tag] = {"fit": fit, "more": seen}
+    return fit
+
+
+def recent_times():
+    """the start picture's Recent files at working hours: the app's own list (recents.xml in its container, read at
+    launch; newest first) gets RECENT_TIMES on its dates, the day kept"""
+    base = os.path.expanduser("~/Library/Containers/%s/Data/Library" % BID)
+    done = []
+    for root, dirs, files in os.walk(base):
+        if "recents.xml" in files:
+            f = os.path.join(root, "recents.xml")
+            t = open(f, encoding="utf-8").read()
+            n = [0]
+
+            def at(mo):
+                k = n[0]
+                n[0] += 1
+                return 'date="%s %s"' % (mo.group(1), RECENT_TIMES[min(k, len(RECENT_TIMES) - 1)])
+            t2 = re.sub(r'date="(\d\d\.\d\d\.\d{4}) \d\d:\d\d"', at, t)
+            open(f, "w", encoding="utf-8").write(t2)
+            done.append([f.replace(base, "~"), n[0], re.findall(r'date="[^"]*"', t2)])
+    log("recent files' times:", done)
+    return done
+
+
+async def pdf_roundtrip(pg, dst, targets, s):
+    """the filled + annotated form saved (Cmd+S), read back from the file (PyMuPDF), and opened again in the app (a copy,
+    in a new tab): the store text may say "form filling and comments" only if all three keep the fields and the marks"""
+    out = {}
+    try:
+        m0 = os.stat(dst).st_mtime
+        await pg.key(83, "KeyS", 4)                       # Cmd+S
+        for _ in range(25):
+            await asyncio.sleep(1)
+            if os.stat(dst).st_mtime > m0:
+                break
+        await asyncio.sleep(4)
+        out["saved"] = os.stat(dst).st_mtime > m0
+        out["tips_after_save"] = await pg.ev(TIPS_JS)
+        try:
+            import pymupdf
+        except ImportError:
+            import fitz as pymupdf
+        d = pymupdf.open(dst)
+        p0 = d[0]
+        out["file_fields"] = {w.field_name: w.field_value for w in p0.widgets()}
+        out["file_annots"] = [a.type[1] for a in p0.annots()]
+        d.close()
+        dst2 = os.path.join(os.path.dirname(dst), "check " + os.path.basename(dst))
+        shutil.copy(dst, dst2)
+        old = {t["id"] for t in await targets()}
+        subprocess.run(["open", "-a", APP, dst2])
+        ed = None
+        for _ in range(60):
+            await asyncio.sleep(1)
+            new = [t for t in await targets() if t["id"] not in old and t.get("type") == "page"]
+            if new:
+                ed = new[0]
+                break
+        if ed:
+            await asyncio.sleep(10)
+            async with s.ws_connect(ed["webSocketDebuggerUrl"], max_msg_size=0) as ws:
+                p2 = Page(ws)
+                out["reopen_ready"] = await frame_ready(p2, "pdf")
+                st = await p2.ev(PDF_STATE_JS) or {}
+                out["app_fields"] = st.get("fields")
+                out["app_annots"] = st.get("annots")
+    except Exception as e:
+        out["err"] = "%s: %s" % (type(e).__name__, e)
+
+    def on(v):
+        return v not in (None, False, "", "Off", "off", 0)
+    want = dict(PDF_FILL)
+    ff = out.get("file_fields") or {}
+    af = dict(out.get("app_fields") or [])
+    ok_file = all((on(ff.get(k)) == v) if isinstance(v, bool) else (ff.get(k) == v) for k, v in want.items())
+    ok_app = all((on(af.get(k)) == v) if isinstance(v, bool) else (af.get(k) == v) for k, v in want.items())
+    fa = " ".join(out.get("file_annots") or [])
+    marks_file = all(x in fa for x in ("Highlight", "Ink", "Text"))
+    marks_app = all(x in (out.get("app_annots") or []) for x in (HIGHLIGHT, INK, TEXT_NOTE))
+    out["ok"] = bool(out.get("saved") and ok_file and ok_app and marks_file and marks_app)
+    out["checks"] = {"saved": out.get("saved"), "file_fields": ok_file, "app_fields": ok_app, "file_marks": marks_file,
+                     "app_marks": marks_app}
+    log("PDF ROUND TRIP:", "OK" if out["ok"] else "NOT OK", json.dumps(out, ensure_ascii=False)[:1500])
+    return out
+
 
 async def main():
+    global WIN
     ensure_quit()
     if MODE in ("shots", "switch"):
         if not container_ready():
             prime()
         set_language()
+    if MODE == "shots" and WIN is None:
+        vis = visible_frame()
+        WIN = (picture_width(vis[2]), WIN_H)
+        res["picture_window"] = list(WIN)
     proc = subprocess.Popen([EXE, "--remote-debugging-port=%d" % PORT],
                             stdout=open(os.path.join(OUT, "app-%s-%s.log" % (MODE, LANG)), "w"), stderr=subprocess.STDOUT)
     t0 = time.time()
@@ -590,6 +912,7 @@ async def main():
             if proc.poll() is None:
                 log("the app did not quit after the recent files: killed")
                 proc.kill()
+            res["recent_times"] = recent_times()
             return "again"
 
         box = place_window()
@@ -617,7 +940,8 @@ async def main():
 
         # documents, opened the way Finder does
         if MODE == "switch":
-            docs = []
+            # (16 Nov 2026) the Arabic spreadsheet + presentation ribbons: the window width that folds nothing (ribbon_fit)
+            docs = [(NAMES["sheet"], DEMO["sheet"], "sheet"), (NAMES["slide"], DEMO["slide"], "slide")]
         elif MODE == "shots":
             docs = [(DOC_NAME, SRC, "editor"), (NAMES["sheet"], DEMO["sheet"], "sheet"), (NAMES["slide"], DEMO["slide"], "slide"),
                     (NAMES["pdf"], DEMO["pdf"], "pdf")]
@@ -690,6 +1014,8 @@ async def main():
                         "latin:", json.dumps((res["ui"][tag] or {}).get("latin"), ensure_ascii=False))
                     caret = tag in ("editor", "slide", "pdf")
                     box = place_window()[:4]
+                    await asyncio.sleep(1.5)
+                    res.setdefault("more_final", {})[tag] = await pg.ev(MORE_JS)
                     if caret:
                         await pg.ev(CARET_JS.replace("__HOLD__", "true"))
                     screen_shot(tag, box)
@@ -698,9 +1024,15 @@ async def main():
                     res["titlebar_" + tag] = titlebar()
                     log("title bar (%s):" % tag, json.dumps(res["titlebar_" + tag], ensure_ascii=False)[:1500])
                     await page_shot_2x(pg, tag, rest=rest, caret=caret)
+                    res.setdefault("editor_users", []).append(
+                        (re.search(r"[?&]username=([^&]*)", ed.get("url", "")) or [None, ""])[1])
+                    if tag == "pdf":
+                        res["pdf_roundtrip"] = await pdf_roundtrip(pg, dst, targets, s)
                 else:
                     screen_shot(tag, place_window()[:4])
                     res["windows_" + tag] = osa(PROC + ' to get {name, subrole} of every window')
+                    if tag in ("cell", "sheet", "slide"):
+                        await ribbon_fit(pg, tag)
     ensure_quit()
     return proc
 
@@ -728,6 +1060,16 @@ if MODE in ("shots", "switch"):
 if MODE == "shots":
     if len(sp.get("recents") or []) < 4 or not all("data:image/webp" in x for x in sp.get("recents") or []):
         bad.append("recent files on the start picture (4, kit pictures): %s" % sp.get("recents"))
+    # (16 Nov 2026 review) the account reads as a team account, at working hours, the Arabic date column's own name
+    if sp.get("pill") != "%s|%s" % (ACCOUNT[1], ACCOUNT[0]):
+        bad.append("account pill %r, not %s|%s" % (sp.get("pill"), ACCOUNT[1], ACCOUNT[0]))
+    if (sp.get("dates") or []) and not all(d.split()[-1:] and d.split()[-1] in RECENT_TIMES for d in sp.get("dates")):
+        bad.append("recent files' times not at working hours: %s" % sp.get("dates"))
+    if LANG == "ar" and sp.get("date_head") != "آخر فتح":
+        bad.append("Arabic Recent files date column: %r" % sp.get("date_head"))
+    for tag, m in (res.get("more_final") or {}).items():
+        if not m or m.get("more") is not False:
+            bad.append("%s picture: ribbon groups folded into More (window %s): %s" % (tag, res.get("picture_window"), m))
     if not str((res.get("editor_info") or {}).get("caret", "")).startswith("summary"):
         bad.append("caret not in the Arabic summary: %s" % (res.get("editor_info") or {}).get("caret"))
     # the five-picture set (16 Nov 2026): every editor picture taken, ready, no tips / dialogs, nothing private
@@ -746,8 +1088,8 @@ if MODE == "shots":
     for tag, v in (res.get("editors_final") or {}).items():
         if not v or v.get("tips") or v.get("dialogs"):
             bad.append("%s picture: tips / dialogs %s" % (tag, v))
-    import re
-    who = [x for x in {os.environ.get("USER", ""), os.environ.get("LOGNAME", ""), os.path.basename(os.path.expanduser("~"))} if len(x) > 2]
+    who = [x for x in {os.environ.get("USER", ""), os.environ.get("LOGNAME", ""), os.path.basename(os.path.expanduser("~"))}
+           | set(res.get("editor_users") or []) if len(x) > 2]
     priv = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+" + "".join(r"|\b%s\b" % re.escape(x) for x in who), re.I)
     # Latin words an Arabic picture may keep: the product name, the account chip's initials, PDF, file extensions
     latin_ok = re.compile(r"^(Xrero( Office)?|XO|PDF|.*\.(docx|xlsx|pptx|pdf))$")
@@ -760,6 +1102,8 @@ if MODE == "shots":
             left = [t for t in u.get("latin") or [] if not latin_ok.match(t)]
             if left:
                 bad.append("%s picture: English in the Arabic interface %s" % (tag, left[:12]))
+        if u.get("chip") != ACCOUNT[1]:
+            bad.append("%s picture: account chip %r, not %s" % (tag, u.get("chip"), ACCOUNT[1]))
     for k, v in res.items():
         if k.startswith("titlebar_") and priv.findall(json.dumps(v, ensure_ascii=False)):
             bad.append("%s: private data %s" % (k, priv.findall(json.dumps(v, ensure_ascii=False))[:5]))
@@ -773,9 +1117,14 @@ if MODE == "shots":
         bad.append("presentation picture (caret in slide 1's title, %s): %s" % (FONT, sl))
     pi = res.get("pdf_info") or {}
     got = {k: v for k, v in (pi.get("fields") or [])}
-    if (any(got.get(k) != v for k, v in PDF_FILL) or pi.get("active") != "notes" or len(pi.get("annots") or []) < 3
-            or pi.get("tab") != "comment"):
-        bad.append("PDF picture (form filled, caret in notes, 3 annotations, Comment tab): %s" % pi)
+    if (any(got.get(k) != v for k, v in PDF_FILL) or pi.get("active") != "notes" or pi.get("tab") != "comment"
+            or HIGHLIGHT not in (pi.get("annots") or []) or TEXT_NOTE not in (pi.get("annots") or []) or pi.get("popover")):
+        bad.append("PDF picture (form filled, caret in notes, a highlight + a sticky note made in the app, Comment tab, "
+                   "no comment balloon): %s" % json.dumps(pi, ensure_ascii=False)[:2500])
+    if INK not in (pi.get("annots") or []):
+        print("note: no pen circle on the PDF picture (optional):", (pi.get("marks") or {}).get("pen_button"))
+    rt = res.get("pdf_roundtrip") or {}
+    print("PDF round trip (save, file, reopen):", "OK" if rt.get("ok") else "NOT OK", rt.get("checks"))
 if bad:
     print("FAIL:", bad)
 sys.exit(3 if bad else 0)

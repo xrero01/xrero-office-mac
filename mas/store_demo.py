@@ -7,14 +7,15 @@ The neutral sample documents the Mac App Store pictures show (mas/store_capture.
   store_demo_ar.docx        Arabic app, as "التقرير الربعي.docx"
   store_demo_sheet[_ar].xlsx    picture 3: a small table with SUM formulas + a column chart (Arabic: right-to-left sheet)
   store_demo_slides[_ar].pptx   picture 4: a designed title slide + a branch-office slide, a chart slide, next steps
-  store_demo_form[_ar].pdf      picture 5: a one-page fillable PDF form (text fields + check boxes, empty: the capture
-                                fills it in the app) that carries a highlight, an ink circle and a sticky note
+  store_demo_form[_ar].pdf      picture 5: a one-page fillable PDF form (text fields + check boxes), empty and without
+                                annotations: the capture makes the highlight, the ink circle and the sticky note with
+                                the app's own Comment tools and fills the form in the app (16 Nov 2026 review)
   (the PDF's page text is laid out by MuPDF with IBM Plex Sans Arabic, SIL OFL 1.1 - embedded as a subset: set
    XR_DEMO_FONTS to a folder with IBMPlexSansArabic-Regular.ttf + -Bold.ttf, otherwise the committed PDFs are kept)
 All of them: one neutral UAE story (three offices, 29 projects delivered in Q3 - the report's own numbers), counts and
 dates only - no money amounts, no people's names, no e-mail addresses.
-16 Nov 2026 (store-picture review): the pictures' headline is "Real Arabic, right to left", so Arabic leads the page
-in both: an Arabic title (28 pt) and summary (14 pt), an Arabic numbered list, then a short English list - the
+16 Nov 2026 (store-picture review): the picture's headline is "Arabic and English in one document" (it was "Real
+Arabic, right to left"), so Arabic leads the page in both: an Arabic title (28 pt) and summary (14 pt), an Arabic numbered list, then a short English list - the
 bilingual part. The second line is English in the English file and Arabic in the Arabic one. All of it is laid out
 right to left by the editor itself (bidi paragraphs, bidi numbering) - no right-to-left table: the editor engine draws
 every table left to right (it has no w:bidiVisual), so a table would only look right-to-left by storing its columns
@@ -226,21 +227,29 @@ def make_sheet(path, lang):
         x.font = Font(name=f, size=size, bold=bold, color=color)
         if fill:
             x.fill = PatternFill("solid", fgColor=fill)
-        x.alignment = Alignment(horizontal=align, vertical="center")
+        if align == "start":
+            # column A (16 Nov 2026 review): the text starts one indent in from the cell's start side - the Arabic
+            # sheet's names touched the right gridline / the row numbers. The engine places "left" / "right" on the
+            # screen's left / right also in a right-to-left sheet (local x2t check: "left" put the Arabic names on
+            # the left of column A), so the Arabic sheet says "right"
+            x.alignment = Alignment(horizontal="right" if c["rtl"] else "left", vertical="center", indent=1,
+                                    readingOrder=2 if c["rtl"] else 1)
+        else:
+            x.alignment = Alignment(horizontal=align, vertical="center")
         return x
 
-    put_cell("A1", c["title"], 16, True, "0B3F4B")
-    put_cell("A2", c["sub"], 11, False, "5B6B70")
+    put_cell("A1", c["title"], 16, True, "0B3F4B", align="start")
+    put_cell("A2", c["sub"], 11, False, "5B6B70", align="start")
     for i, h in enumerate(c["head"]):
-        put_cell("ABCDE"[i] + "4", h, 11, True, "FFFFFF", "0585A1", "general" if i == 0 else "center")
+        put_cell("ABCDE"[i] + "4", h, 11, True, "FFFFFF", "0585A1", "start" if i == 0 else "center")
     vals = []
     for r, (office, *q) in enumerate(c["rows"], 5):
-        put_cell("A%d" % r, office)
+        put_cell("A%d" % r, office, align="start")
         for i, v in enumerate(q):
             put_cell("BCD"[i] + str(r), v, align="center")
         put_cell("E%d" % r, "=SUM(B%d:D%d)" % (r, r), bold=True, align="center")
         vals.append(q)
-    put_cell("A8", c["total"], bold=True, fill="E6F3F6")
+    put_cell("A8", c["total"], bold=True, fill="E6F3F6", align="start")
     for i, col in enumerate("BCDE"):
         put_cell(col + "8", "=SUM(%s5:%s7)" % (col, col), bold=True, fill="E6F3F6", align="center")
     for r in range(4, 9):
@@ -289,7 +298,9 @@ def make_sheet(path, lang):
 def chart_xml(c, vals):
     """a clustered column chart of the table (B4:D7 by A5:A7) with its cached values. The category axis runs left to
     right in both languages: reversed (maxMin, categories from the right) the editor drew the first category's label
-    turned on its side and dropped the others (run 23, Arabic picture; the local x2t preview showed the same)"""
+    turned on its side and dropped the others (run 23, Arabic picture; the local x2t preview showed the same).
+    The legend is a list on the right (16 Nov 2026 review): in one row under the chart each colour sat as close to the
+    next quarter's name as to its own, and read right to left the Arabic legend paired colours with the wrong quarters"""
     from xml.sax.saxutils import escape as e
     f, sh = c["font"], "'%s'" % c["sheet"]
 
@@ -336,7 +347,7 @@ def chart_xml(c, vals):
             '<c:tickLblPos val="nextTo"/><c:spPr><a:ln><a:noFill/></a:ln></c:spPr>%s<c:crossAx val="5101"/>'
             '<c:crosses val="autoZero"/><c:crossBetween val="between"/><c:majorUnit val="4"/></c:valAx>'
             '<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr></c:plotArea>'
-            '<c:legend><c:legendPos val="b"/><c:overlay val="0"/>%s</c:legend>'
+            '<c:legend><c:legendPos val="r"/><c:overlay val="0"/>%s</c:legend>'
             '<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>'
             '<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>'
             '<a:ln w="9525"><a:solidFill><a:srgbClr val="D5E3E7"/></a:solidFill></a:ln></c:spPr>%s'
@@ -436,12 +447,14 @@ def make_slides(path, lang):
         sl.shapes._spTree.insert(2, s._element)
         return s
 
-    def place(ph, x, y, w, h, anchor=MSO_ANCHOR.TOP):
-        # the box 0.1 in wider on each side with the default 0.1 in text inset: the text stays at x, and the box's
-        # selection frame (picture 4: the caret in the title) no longer runs through the first letter (run 26)
-        ph.left, ph.top, ph.width, ph.height = X(x - 0.1, w + 0.2), Inches(y), Inches(w + 0.2), Inches(h)
+    def place(ph, x, y, w, h, anchor=MSO_ANCHOR.TOP, inset=0.1):
+        # the box <inset> wider on each side with the same text inset: the text stays at x, and the box's selection
+        # frame (picture 4: the caret in the title) no longer runs through the first letter (run 26). The title slide's
+        # title has 0.3 in (16 Nov 2026 review: at the editor's fit zoom 0.1 in left the frame's middle handles on the
+        # "Q" of "Q3 review" / the last letter of the Arabic title)
+        ph.left, ph.top, ph.width, ph.height = X(x - inset, w + 2 * inset), Inches(y), Inches(w + 2 * inset), Inches(h)
         ph.text_frame.vertical_anchor = anchor
-        ph.text_frame.margin_left = ph.text_frame.margin_right = Inches(0.1)
+        ph.text_frame.margin_left = ph.text_frame.margin_right = Inches(inset)
         return ph.text_frame
 
     # 1 - title slide: ink background, the title block on the reading side, circles on the other
@@ -453,7 +466,7 @@ def make_slides(path, lang):
         shape(s1, *args)
     shape(s1, MSO_SHAPE.OVAL, 10.65, 0.55, 1.45, 1.45, None, None, light, 2.25)
     shape(s1, MSO_SHAPE.RECTANGLE, 0.95, 3.72, 1.25, 0.08, light)
-    text(place(s1.shapes.title, 0.95, 2.05, 6.9, 1.55, MSO_ANCHOR.BOTTOM), [c["title"]], 54, C.from_string("FFFFFF"), True)
+    text(place(s1.shapes.title, 0.95, 2.05, 6.9, 1.55, MSO_ANCHOR.BOTTOM, inset=0.3), [c["title"]], 54, C.from_string("FFFFFF"), True)
     text(place(s1.placeholders[1], 0.95, 3.98, 6.9, 0.9), [c["sub"]], 22, C.from_string("C7E6EC"))
 
     # 2 - the branch-office slide
@@ -510,23 +523,27 @@ def make_slides(path, lang):
 
 
 # ------------------------------------------------------------------------------------------------------------------
-# picture 5: PDF - a one-page meeting-room request form. Text fields + check boxes (empty: store_capture.py fills them in
-# the app with Tab / typing / Enter), plus three annotations a reviewer left: a highlight on the deadline line, an ink
-# circle around the date field and a sticky note beside it. Arabic: right-to-left page, fields right aligned.
+# picture 5: PDF - a one-page meeting-room request form. Text fields + check boxes, empty: store_capture.py fills them in
+# the app with Tab / typing / Enter, and makes the annotations with the app's Comment tools (a highlight on the deadline
+# line, a pen circle around the date field, a sticky note beside it - store_capture.py prep_pdf). Arabic: right-to-left page,
+# fields right aligned.
+# Bold Arabic headings have no lam-alef (لا / لأ / لإ / لآ): the app drew the bold "ملاحظات" of the subset bold face as
+# "مادحظات" (run 27; the same file is right in MuPDF; regular-weight lam-alef is fine) - mas/store/NOTES.md.
 PDF = {
     "en": dict(rtl=False, title="Meeting room request", sub="Office services · United Arab Emirates",
                h1="Request details", labels=("Department", "Office", "Date", "Attendees"),
                h2="Equipment", boxes=("Display screen", "Video call", "Refreshments"), h3="Notes",
                note="Please send the request at least two working days before the meeting.",
-               h4="For office use", office=("Approved by", "Room"), sticky="The main room is free on this date."),
+               h4="For office use", office=("Approved by", "Room")),
     "ar": dict(rtl=True, title="طلب حجز قاعة اجتماعات", sub="خدمات المكاتب · الإمارات العربية المتحدة",
                h1="بيانات الطلب", labels=("القسم", "المكتب", "التاريخ", "عدد الحضور"),
-               h2="التجهيزات المطلوبة", boxes=("شاشة عرض", "مكالمة فيديو", "ضيافة"), h3="ملاحظات",
+               h2="التجهيزات المطلوبة", boxes=("شاشة عرض", "مكالمة فيديو", "ضيافة"), h3="تفاصيل إضافية",
                note="يُرجى إرسال الطلب قبل موعد الاجتماع بيومَي عمل على الأقل.",
-               h4="للاستخدام الإداري", office=("اعتمده", "القاعة"), sticky="القاعة الكبرى متاحة في هذا التاريخ."),
+               h4="خاص بالمكتب", office=("اعتمده", "القاعة")),
 }
 # the fields in tab order (store_capture.py fills them in this order)
 PDF_FIELDS = ("department", "office", "date", "attendees", "display", "video", "refreshments", "notes")
+BOLD_LAM_ALEF = ("لا", "لأ", "لإ", "لآ")
 
 
 def make_pdf(path, lang, font_dir):
@@ -548,6 +565,7 @@ def make_pdf(path, lang, font_dir):
         return fitz.Rect(W - x1, y0, W - x0, y1) if rtl else fitz.Rect(x0, y0, x1, y1)
 
     def put(rect, t, size, color="1F2A2E", bold=False):
+        assert not (bold and any(x in t for x in BOLD_LAM_ALEF)), ("bold lam-alef (drawn wrong by the app)", t)
         # (no text-align: MuPDF swaps left / right inside dir=rtl - the paragraph's own start side is the right one)
         h = '<div dir="%s" style="font-size:%gpt;color:#%s;font-weight:%s">%s</div>' % (
             "rtl" if rtl else "ltr", size, color, "bold" if bold else "normal", html.escape(t))
@@ -575,7 +593,7 @@ def make_pdf(path, lang, font_dir):
     put(R(50, 270, 545, 292), c["h3"], 12.5, "0585A1", True); rule(295)
     fields["notes"] = R(50, 303, 545, 343)
     note = R(50, 350, 545, 368)
-    put(note, c["note"], 10, "5B6B70")
+    put(note, c["note"], 10, "5B6B70")          # (the capture highlights this line in the app)
     put(R(50, 398, 545, 420), c["h4"], 12.5, "0585A1", True); rule(423)
     for x, t in ((50, c["office"][0]), (305, c["office"][1])):
         put(R(x, 438, x + 80, 459), t, 10.5, "3D4B50")
@@ -593,30 +611,14 @@ def make_pdf(path, lang, font_dir):
             w.field_value = False
         else:
             w.field_type = fitz.PDF_WIDGET_TYPE_TEXT
-            w.text_font, w.text_fontsize, w.text_color = "Helv", 11, (0.12, 0.16, 0.18)
+            # (Helv has no Arabic: the app types Arabic in a fallback face that looked smaller and greyer than the
+            # 10.5 pt labels at 11 pt - 13 pt in the Arabic form, 16 Nov 2026 review)
+            w.text_font, w.text_fontsize, w.text_color = "Helv", 13 if rtl else 11, (0.12, 0.16, 0.18)
             if name == "notes":
                 w.field_flags |= fitz.PDF_TX_FIELD_IS_MULTILINE
         a = pg.add_widget(w)
         if rtl and w.field_type == fitz.PDF_WIDGET_TYPE_TEXT:
             doc.xref_set_key(a.xref, "Q", "2")            # right aligned
-
-    # the reviewer's marks
-    words = pg.get_text("words", clip=note)
-    box = fitz.Rect(words[0][:4])
-    for wd in words[1:]:
-        box |= fitz.Rect(wd[:4])
-    hl = pg.add_highlight_annot(box)
-    hl.set_colors(stroke=(1.0, 0.85, 0.25)); hl.set_info(title="Xrero", content=""); hl.update()
-    dr = fields["date"]
-    cx, cy, rx, ry = (dr.x0 + dr.x1) / 2, (dr.y0 + dr.y1) / 2, dr.width / 2 + 9, dr.height / 2 + 8
-    import math
-    pts = [(cx + rx * (1 + 0.03 * math.sin(3 * t)) * math.cos(t), cy + ry * (1 + 0.05 * math.cos(2 * t)) * math.sin(t))
-           for t in [-2.7 + k * (2 * math.pi + 0.5) / 60 for k in range(61)]]
-    ink_ = pg.add_ink_annot([pts])
-    ink_.set_border(width=1.6); ink_.set_colors(stroke=(0.78, 0.27, 0.12)); ink_.set_info(title="Xrero", content=""); ink_.update()
-    sx = (dr.x1 + 12) if rtl else (dr.x0 - 32)      # between the label and the circled field
-    st = pg.add_text_annot((sx, dr.y0 + 2), c["sticky"], icon="Comment")
-    st.set_colors(stroke=(1.0, 0.85, 0.25)); st.set_info(title="Xrero"); st.update()
 
     doc.set_metadata({"title": c["title"], "author": "Xrero", "subject": "", "keywords": "", "creator": "Xrero",
                       "producer": "Xrero"})

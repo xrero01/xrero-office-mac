@@ -419,6 +419,18 @@ for f in glob.glob(os.path.join(E, "web-apps", "apps", "pdfeditor", "main", "loc
         open(f, "w", encoding="utf-8").write(t2)
         n_pdf_ar += 1
 log("Arabic wording (PDF editor Collaboration tab):", n_pdf_ar, "files")
+# (16 Nov 2026, store-picture review) the spreadsheet editor's Arabic ribbon calls the same tab "العمل المشترك"; the
+# document, presentation and (above) PDF editors say "التعاون" - one name for the tab in all four
+n_sse_ar = 0
+for f in glob.glob(os.path.join(E, "web-apps", "apps", "spreadsheeteditor", "main", "locale", "ar.json")):
+    t = open(f, encoding="utf-8").read()
+    t2 = re.sub(r'("SSE\.Views\.Toolbar\.textTabCollaboration"\s*:\s*)"العمل المشترك"', '\\1"التعاون"', t)
+    if t2 != t:
+        open(f, "w", encoding="utf-8").write(t2)
+        n_sse_ar += 1
+log("Arabic wording (spreadsheet editor Collaboration tab):", n_sse_ar, "files")
+if n_sse_ar != 1:
+    raise SystemExit("spreadsheet Collaboration tab: expected the spreadsheeteditor ar.json, changed %d" % n_sse_ar)
 # the spreadsheet formula bar in the Arabic (right-to-left) interface took the interface's direction for a formula too:
 # "=SUM(B5:D5)" read "SUM(B5:D5)=". Each line now takes its direction from its own first letter (a formula left to
 # right, Arabic text right to left), still aligned to the right like the rest of the right-to-left bar
@@ -485,14 +497,24 @@ MAC_JS = r"""
 })();
 /*XR-MAC-END*/
 """
+# the editors' account chip (the payload's header): the initials of an Arabic name skip its article, as on the start
+# page (web/xr-account.js): "فريق المشاريع" -> "فم", not "فا" (16 Nov 2026; Mac bundle only)
+INI_OLD = "var p=n.split(/\\s+/); return ((p[0][0]||'')+(p.length>1?(p[p.length-1][0]||''):'')).toUpperCase(); }"
+INI_NEW = ("var p=n.split(/\\s+/); var i1=function(w){return /^\\u0627\\u0644[\\u0621-\\u064A]{2,}/.test(w)?w[2]:(w[0]||'');}; "
+           "return (i1(p[0])+(p.length>1?i1(p[p.length-1]):'')).toUpperCase(); }")
+n_ini = 0
 for e in ("documenteditor", "spreadsheeteditor", "presentationeditor", "pdfeditor"):
     f = os.path.join(E, "web-apps", "apps", e, "main", "app.js")
     if os.path.exists(f):
         s = open(f, encoding="utf-8").read()
+        s = s.replace(INI_OLD, INI_NEW)
+        n_ini += INI_NEW in s
         s = re.sub(r"\n?/\*XR-MAC-START\*/.*?/\*XR-MAC-END\*/\n?", "", s, flags=re.S)
         s = re.sub(r"\n?/\*XR-ACCT-START\*/.*?/\*XR-ACCT-END\*/\n?", "", s, flags=re.S)
         open(f, "w", encoding="utf-8").write(s.rstrip() + "\n" + MAC_JS + ACCT_JS + "\n")
-log("mac header shim (+ no first-run feature tips) + Xrero account appended to app.js")
+log("mac header shim (+ no first-run feature tips) + Xrero account appended to app.js; Arabic initials:", n_ini, "editors")
+if n_ini != 4:
+    raise SystemExit("account chip initials: expected the four editors' app.js, changed %d" % n_ini)
 
 # ---------------------------------------------------------------- start page
 login = os.path.join(RES, "login", "index.html")

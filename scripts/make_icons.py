@@ -13,8 +13,10 @@ and writes (all committed, so the macOS build only copies them):
     assets/icons/xr-slide.icns       presentation files  <- slides-*-1024.png
     assets/icons/xr-pdf.icns         PDF files           <- pdf-*-1024.png
     assets/icons/preview/*.png       512 px previews of each (for review only)
-    web/xr-home.js                   the start page tile pictures (KIND block, 200 px WebP data URIs) and the
-                                     small plain pictures of the Recent list (KIND_PLAIN, 64 px)
+    web/xr-home.js                   the start page tile pictures (KIND block, 200 px WebP data URIs), the same
+                                     tiles from the plain artwork for the Arabic start page (KIND_AR, 16 Nov 2026:
+                                     the named artwork's words are English) and the small plain pictures of the
+                                     Recent list (KIND_PLAIN, 64 px)
     assets/icons/small/*.png         small plain pictures, icon body only (no grid margin): the title-bar tab icons
                                      (tab-doc / tab-sheet / tab-slide / tab-pdf) and the start tab's app icon (tab-app),
                                      drawn into the bundle by scripts/tab_logo.swift
@@ -103,7 +105,7 @@ def body(art, px):
 SETS = [("office", "AppIcon"), ("writer", "xr-doc"), ("calc", "xr-sheet"), ("slides", "xr-slide"), ("pdf", "xr-pdf")]
 SMALL = {"office": "tab-app", "writer": "tab-doc", "calc": "tab-sheet", "slides": "tab-slide", "pdf": "tab-pdf"}
 os.makedirs(os.path.join(OUT, "small"), exist_ok=True)
-tiles, plains = {}, {}
+tiles, plains, tiles_ar = {}, {}, {}
 for kit, name in SETS:
     named = on_grid(Image.open(os.path.join(KIT, kit + "-named-1024.png")))
     plain = on_grid(Image.open(os.path.join(KIT, kit + "-plain-1024.png")))
@@ -121,6 +123,9 @@ for kit, name in SETS:
         b = io.BytesIO()
         named.crop((OFF, OFF, OFF + BODY, OFF + BODY)).resize((200, 200), Image.LANCZOS).save(b, "WEBP", quality=88, method=6)
         tiles[kit] = "data:image/webp;base64," + base64.b64encode(b.getvalue()).decode()
+        b = io.BytesIO()
+        plain.crop((OFF, OFF, OFF + BODY, OFF + BODY)).resize((200, 200), Image.LANCZOS).save(b, "WEBP", quality=88, method=6)
+        tiles_ar[kit] = "data:image/webp;base64," + base64.b64encode(b.getvalue()).decode()
     print("made", name, os.path.getsize(os.path.join(OUT, name + ".icns")), "bytes")
 
 # start page pictures -> web/xr-home.js (between the KIND markers)
@@ -129,6 +134,9 @@ s = open(home, encoding="utf-8").read()
 block = ("/*XR-KIND-START (scripts/make_icons.py)*/var KIND = {" +
          ",".join("%s:'%s'" % (k, v) for k, v in
                   (("word", tiles["writer"]), ("cell", tiles["calc"]), ("slide", tiles["slides"]), ("form", tiles["pdf"]))) +
+         "};\n  var KIND_AR = {" +
+         ",".join("%s:'%s'" % (k, v) for k, v in
+                  (("word", tiles_ar["writer"]), ("cell", tiles_ar["calc"]), ("slide", tiles_ar["slides"]), ("form", tiles_ar["pdf"]))) +
          "};\n  var KIND_PLAIN = {" +
          ",".join("%s:'%s'" % (k, v) for k, v in
                   (("word", plains["writer"]), ("cell", plains["calc"]), ("slide", plains["slides"]), ("form", plains["pdf"]))) +

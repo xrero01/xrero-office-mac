@@ -175,9 +175,12 @@
     if (text !== undefined) e.textContent = text;          // user text is always TEXT, never HTML
     return e;
   }
+  // 16 Nov 2026: an Arabic word's article is skipped ("فريق المشاريع" -> "فم", "محمد الهاشمي" -> "مه"); the initial
+  // of every name with "ال" was "ا" (scripts/patch_bundle.py gives the editors' account chip the same rule)
+  function initial(w) { return /^\u0627\u0644[\u0621-\u064A]{2,}/.test(w) ? w[2] : (w || '?')[0]; }
   function initials(a) {
     var n = (a.name || a.email || '?').trim().split(/\s+/);
-    return ((n[0] || '?')[0] + (n.length > 1 ? n[n.length - 1][0] : '')).toUpperCase();
+    return (initial(n[0]) + (n.length > 1 ? initial(n[n.length - 1]) : '')).toUpperCase();
   }
   function walled() { return REQUIRED && !info(); }
   function close() {

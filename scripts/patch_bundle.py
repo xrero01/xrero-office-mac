@@ -593,6 +593,70 @@ MAC_JS = r"""
       } else if (++n > 2400) clearInterval(t);
     }, 25);
   })();
+  // XR-FIELD-AP (16 Nov 2026, APP-BACKLOG 18): Arabic typed into a PDF form field whose font is EMBEDDED in the PDF
+  // (/DR - many real Arabic forms, and the Windows store demo's /Dubai) looked right while typing but was saved as
+  // separate, overlapping letters, in the app after reopening and in every other PDF reader. On Save the editor draws
+  // each changed field's appearance (sdkjs CBaseField.WriteRenderToBinary) with its shaped glyphs - glyph id + code
+  // points (CDocumentRenderer.tg) - and the converter writes them into the PDF. For a font embedded in the PDF the
+  // converter takes the glyph by its FIRST CODE POINT, not by the glyph id (core PdfWriter CFontEmbedded::EncodeUnicode
+  // looks the code point up in the font's ToUnicode first), so every Arabic letter got its isolated form at the place
+  // of its joined form; lam-alef lost its second letter the same way. Latin is right (one glyph per letter). The
+  // converter is native code (not in this layer), so in a field's appearance a glyph of an embedded font that the
+  // converter cannot address by its code point - a shaped form, a ligature, any complex-script glyph - is drawn as
+  // its outline (the same font program, the same place, the same colour): what the PDF shows is exactly what the
+  // editor showed. Glyphs the code point gives right (Latin, digits) stay text; fields in system fonts (the converter
+  // embeds those by glyph id) and every other drawing are unchanged. (window.__xrNoFieldApFix = the original path, for
+  // the engine checks' control round; scripts/engine_checks.py)
+  (function fieldApShaped(){
+    var n = 0, t = setInterval(function () {
+      var P = window.AscPDF, C = window.AscCommon, F = window.AscFonts;
+      var B = P && P.CBaseField && P.CBaseField.prototype, R = C && C.CDocumentRenderer && C.CDocumentRenderer.prototype;
+      if (B && R && B.WriteRenderToBinary && R.tg && C.g_oTextMeasurer && F && F.getEmbeddedFontPrefix) {
+        clearInterval(t);
+        if (B.WriteRenderToBinary.__xr) return;
+        var origWrite = B.WriteRenderToBinary, origTg = R.tg, prefix = F.getEmbeddedFontPrefix();
+        var complex = function (c) {
+          return (c >= 0x0590 && c <= 0x08FF) || (c >= 0x0900 && c <= 0x0DFF) || (c >= 0x0E00 && c <= 0x0EFF) ||
+                 (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFF) || c === 0x200C || c === 0x200D;
+        };
+        B.WriteRenderToBinary = function (memory) {
+          var dr = memory && memory.docRenderer;
+          if (!dr || window.__xrNoFieldApFix) return origWrite.apply(this, arguments);
+          var was = dr.__xrFieldAp;
+          dr.__xrFieldAp = true;
+          try { return origWrite.apply(this, arguments); } finally { dr.__xrFieldAp = was; }
+        };
+        B.WriteRenderToBinary.__xr = true;
+        R.tg = function (gid, x, y, codePoints) {
+          if (this.__xrFieldAp && this.m_lPagesCount > 0) {
+            try {
+              var mf = this.m_arrayPages[this.m_lPagesCount - 1], f = mf && mf.m_oFont;
+              if (f && typeof f.Name === 'string' && f.Name.indexOf(prefix) === 0) {
+                var cps = codePoints || [], need = cps.length !== 1, tm = C.g_oTextMeasurer;
+                for (var i = 0; !need && i < cps.length; i++) need = complex(cps[i]);
+                // this font, freshly set up in the measurer's own font manager (72 dpi: outlines in mm, as the page)
+                if (tm.m_oLastFont) tm.m_oLastFont.SetUpName = '';
+                var font = tm.SetFontInternal(f.Name, f.FontSize, Math.max(f.Style || 0, 0));
+                var mgr = tm.m_oManager;
+                if (font && mgr && mgr.m_pFont === font) {
+                  if (!need) need = font.GetGIDByUnicode(cps[0]) !== gid;
+                  if (need) {
+                    var g0 = mgr.m_oGlyphString.GetFirstGlyph();
+                    g0.fX = 0; g0.fY = 0;
+                    mgr.LoadStringPathCode(gid, true, x, y, this);
+                    window.__xrFieldApOutlines = (window.__xrFieldApOutlines || 0) + 1;
+                    return;
+                  }
+                }
+              }
+            } catch (e) { window.__xrFieldApErr = '' + e; }
+          }
+          return origTg.apply(this, arguments);
+        };
+        window.__xrFieldApFix = true;
+      } else if (++n > 2400) clearInterval(t);
+    }, 25);
+  })();
 })();
 /*XR-MAC-END*/
 """
@@ -624,6 +688,51 @@ if n_ini != 4:
 if n_present != 1:
     raise SystemExit("Present button Arabic label: not found in the presentation editor's app.js")
 log("Present button: Arabic label 'بدء العرض'")
+# the engine functions the shims above wrap at run time (MAC_JS: pdfKeyTick, XR-FIELD-AP) must be in this payload's
+# sdkjs under these names - a payload whose engine renamed them would leave a shim silently idle
+SDK_WORD = open(os.path.join(E, "sdkjs", "word", "sdk-all.js"), encoding="utf-8", errors="surrogateescape").read()
+for need in ("CBaseField.prototype.WriteRenderToBinary = function(memory)", "CDocumentRenderer.prototype.tg = function(gid, x, y, codePoints)",
+             "LoadStringPathCode : function(code, isGid, fX, fY, worker)", "window['AscFonts'].getEmbeddedFontPrefix = function()",
+             "CPDFDoc.prototype.EnterDownActiveField = function()"):
+    if need not in SDK_WORD:
+        raise SystemExit("engine shim target missing in the payload's sdkjs: " + need)
+log("engine shim targets present in sdkjs/word/sdk-all.js")
+
+# XR-PPTX-BIDI-LANG (16 Nov 2026, store NOTES "presentation status bar language"): Arabic slide text written as
+# lang="ar-AE" was reported as "Arabic (Saudi Arabia)". A DrawingML run has ONE language (a:rPr lang), and the reader
+# (sdkjs BinaryPPTYLoader.ReadRunProperties) puts it into Lang.Val only, while the editor reads the language of right-
+# to-left text from Lang.Bidi (CFontCalculator: the status bar; the spell checker), which then fell back to the
+# default ar-SA. For a run whose language is a right-to-left one (Arabic, Hebrew, Persian, Urdu ...) that language is
+# now also its Lang.Bidi - what Word documents already carry (w:lang w:bidi), and what the document editor reports.
+# Nothing is written differently (a:rPr lang is still Lang.Val); left-to-right languages are unchanged. All bundles
+# that read DrawingML text (presentations, and charts / shapes in the other editors); the macOS converter (JSC) loads
+# the same files.
+PPTX_LANG_OLD = ("var nLcid = Asc.g_oLcidNameToIdMap[lang];\n"
+                 "                        if(nLcid)\n"
+                 "                            rPr.Lang.Val = nLcid;")
+PPTX_LANG_NEW = ("var nLcid = Asc.g_oLcidNameToIdMap[lang];\n"
+                 "                        if(nLcid)\n"
+                 "                            rPr.Lang.Val = nLcid;\n"
+                 "                        /*XR-PPTX-BIDI-LANG*/ if(nLcid && /^(ar|he|iw|fa|ur|ps|sd|ug|yi|dv|syr|ckb|ku-Arab)(-|$)/i.test(lang))\n"
+                 "                            rPr.Lang.Bidi = nLcid;")
+n_lang = 0
+for b in ("word", "slide", "cell", "visio"):
+    f = os.path.join(E, "sdkjs", b, "sdk-all.js")
+    if not os.path.exists(f):
+        continue
+    t = open(f, encoding="utf-8", errors="surrogateescape", newline="").read()       # (line ends kept as they are)
+    if "/*XR-PPTX-BIDI-LANG*/" in t:
+        continue
+    nl = "\r\n" if PPTX_LANG_OLD.replace("\n", "\r\n") in t else "\n"
+    k = t.count(PPTX_LANG_OLD.replace("\n", nl))
+    if k != 1:
+        raise SystemExit("DrawingML run language reader: expected 1 place in sdkjs/%s/sdk-all.js, found %d" % (b, k))
+    open(f, "w", encoding="utf-8", errors="surrogateescape", newline="").write(
+        t.replace(PPTX_LANG_OLD.replace("\n", nl), PPTX_LANG_NEW.replace("\n", nl)))
+    n_lang += 1
+log("right-to-left run language also as Lang.Bidi (DrawingML reader):", n_lang, "bundles")
+if n_lang < 2:
+    raise SystemExit("DrawingML run language reader: expected at least the document and presentation bundles, changed %d" % n_lang)
 
 # ---------------------------------------------------------------- start page
 login = os.path.join(RES, "login", "index.html")

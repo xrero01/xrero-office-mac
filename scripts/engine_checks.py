@@ -97,6 +97,8 @@ SLIDE_JS = r"""(function(op){""" + FRAME + r"""var o={};
       var a=dd.ConvertCoordsToCursor3(xm,ym,false),v=d.getElementById('id_viewer').getBoundingClientRect();
       return {x:fr.left+v.left+a.X,y:fr.top+v.top+a.Y};}
     if(op==='end'){p.MoveCursorToEndPos(false);}
+    if(op==='enter'){var cc=p.GetCurrentController();cc.resetSelection();sp.select(cc,0);cc.selection.textSelection=sp;
+      sp.getDocContent().MoveCursorToEndPos(false);p.Document_UpdateInterfaceState();}
     var par=sp.txBody.content.Content[0];
     function L(l){return l?[l.Val,l.Bidi,l.EastAsia]:null;}
     o.runs=par.Content.map(function(r){return r.Pr?L(r.Pr.Lang):null;});
@@ -521,7 +523,10 @@ async def case_pptx_lang(s, app, evid, out):
             await pg.click(pt["x"], pt["y"])
             await asyncio.sleep(1.5)
         r["after_click"] = await pg.ev(SLIDE_JS.replace("__OP__", json.dumps("read")))
-        r["at_end"] = await pg.ev(SLIDE_JS.replace("__OP__", json.dumps("end")))
+        if (r["after_click"] or {}).get("in_text"):
+            r["at_end"] = await pg.ev(SLIDE_JS.replace("__OP__", json.dumps("end")))
+        else:                                   # (the click selected the shape only: the caret put in its text)
+            r["entered"] = await pg.ev(SLIDE_JS.replace("__OP__", json.dumps("enter")))
         await asyncio.sleep(1.5)
         r["state"] = await pg.ev(SLIDE_JS.replace("__OP__", json.dumps("read")))
         await pg.shot(os.path.join(evid, "pptx-lang.png"))

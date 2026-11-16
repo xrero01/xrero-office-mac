@@ -623,7 +623,14 @@ MAC_JS = r"""
         // text, and why a glyph was left as text)
         var dbg = window.__xrFieldApDbg = {writes: 0, flagged: 0, outlines: 0, text: 0, why: {}, names: {}, err: ''};
         var why = function (k) { dbg.why[k] = (dbg.why[k] || 0) + 1; };
-        B.WriteRenderToBinary = function (memory) {
+        // (build-mac run 41: with a plain assignment the wrapper was not what the save called - the counters stayed 0
+        // although the field was drawn; it is now set as an own property and checked, the result kept in dbg.installed)
+        var install = function (obj, name, fn) {
+          try { obj[name] = fn; } catch (e) {}
+          if (obj[name] !== fn) { try { Object.defineProperty(obj, name, {value: fn, writable: true, configurable: true}); } catch (e) {} }
+          return obj[name] === fn;
+        };
+        var newWrite = function (memory) {
           var dr = memory && memory.docRenderer;
           dbg.writes++;
           if (!dr || window.__xrNoFieldApFix) return origWrite.apply(this, arguments);
@@ -631,8 +638,7 @@ MAC_JS = r"""
           dr.__xrFieldAp = true;
           try { return origWrite.apply(this, arguments); } finally { dr.__xrFieldAp = was; }
         };
-        B.WriteRenderToBinary.__xr = true;
-        R.tg = function (gid, x, y, codePoints) {
+        var newTg = function (gid, x, y, codePoints) {
           if (this.__xrFieldAp && this.m_lPagesCount > 0) {
             dbg.flagged++;
             var mem = this.Memory, p0 = mem ? mem.pos : -1;
@@ -669,7 +675,16 @@ MAC_JS = r"""
           }
           return origTg.apply(this, arguments);
         };
-        window.__xrFieldApFix = true;
+        newWrite.__xr = newTg.__xr = true;
+        dbg.installed = {write: install(B, 'WriteRenderToBinary', newWrite), tg: install(R, 'tg', newTg),
+                         frozen: Object.isFrozen(B) || Object.isFrozen(R)};
+        // the field classes that inherit the method (an own copy on a subclass would bypass the base class's wrapper)
+        ['CTextField', 'CComboBoxField', 'CListBoxField'].forEach(function (k) {
+          var KP = P[k] && P[k].prototype;
+          if (KP && Object.prototype.hasOwnProperty.call(KP, 'WriteRenderToBinary') && KP.WriteRenderToBinary !== newWrite)
+            dbg.installed[k] = install(KP, 'WriteRenderToBinary', newWrite);
+        });
+        window.__xrFieldApFix = dbg.installed.write && dbg.installed.tg;
       } else if (++n > 2400) clearInterval(t);
     }, 25);
   })();

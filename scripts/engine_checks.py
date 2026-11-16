@@ -113,6 +113,16 @@ OUTLINE_PROBE_JS = r"""(function(){""" + FRAME + r"""try{var a=api.getPDFDoc().w
   return {font:nm,loaded:!!font,same:mgr.m_pFont===font,gid:gid,calls:n,engine:typeof w.AscFonts.FT_Glyph_Get_Measure};
   }catch(e){return 'error: '+e;}})()"""
 
+# is the XR-FIELD-AP wrapper what a field's save calls? (run 41: its counters stayed 0 while the field was drawn)
+CHAIN_JS = r"""(function(){""" + FRAME + r"""try{var P=w.AscPDF,B=P.CBaseField.prototype,f=api.getPDFDoc().widgets[0];
+  var d=Object.getOwnPropertyDescriptor(B,'WriteRenderToBinary'),R=w.AscCommon.CDocumentRenderer.prototype;
+  return {installed:(w.__xrFieldApDbg||{}).installed||null,own:d?{w:d.writable,c:d.configurable,wrapper:!!(d.value&&d.value.__xr)}:null,
+    inst_same:f.WriteRenderToBinary===B.WriteRenderToBinary,inst_wrapper:!!(f.WriteRenderToBinary&&f.WriteRenderToBinary.__xr),
+    chain:Object.getPrototypeOf(Object.getPrototypeOf(f))===B,ctor:(f.constructor&&f.constructor.name)||'',
+    own_on_field_class:Object.prototype.hasOwnProperty.call(Object.getPrototypeOf(f),'WriteRenderToBinary'),
+    src:String(f.WriteRenderToBinary).slice(0,100),frozen:Object.isFrozen(B),tg_wrapper:!!R.tg.__xr,
+    two_ascpdf:!!(w.parent&&w.parent!==w&&w.parent.AscPDF)};}catch(e){return 'error: '+e;}})()"""
+
 SLIDE_JS = r"""(function(op){""" + FRAME + r"""var o={};
   try{var wc=api.WordControl,p=wc.m_oLogicDocument;
     if(!w.__xrLangHook){w.__xrLangs=[];api.asc_registerCallback('asc_onTextLanguage',function(v){w.__xrLangs.push(v);});w.__xrLangHook=1;}
@@ -402,6 +412,7 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
             r["switch_off"] = await pg.ev("(function(){" + FRAME + "w.__xrNoFieldApFix=true;return true;})()")
         g = await pg.ev(PDF_GEOM_JS) or {}
         r["fix_present"] = g.get("fix")
+        r["chain"] = await pg.ev(CHAIN_JS)
         fields = g.get("fields") or {}
         typed = {}
         for name, val in (("client", AR_CLIENT), ("ref", LATIN_REF), ("office", AR_OFFICE)):
@@ -547,6 +558,48 @@ async def case_pdf_lamalef(s, app, evid, out):
         d.close()
         r["engine"] = await pg.ev("(function(){" + FRAME + "try{return typeof w.g_native_drawing_file+'/'+"
                                   "typeof (w.AscViewer&&w.AscViewer.CDrawingFile);}catch(e){return ''+e;}})()")
+    # the store form of run 27 (mas/store_demo_form_ar.pdf at a81a224, kept as test/inputs/ar_form_bold_heading.pdf):
+    # its 12.5 pt bold headings "ملاحظات" / "للاستخدام الإداري", drawn by the app at device scale 1 and 2 (run 27's
+    # picture was the device-scale-2 page: "مادحظات")
+    src2 = os.path.join(ROOT, "test", "inputs", "ar_form_bold_heading.pdf")
+    path2 = os.path.join(evid, "ar-form-bold-heading.pdf")
+    shutil.copy(src2, path2)
+    t = await open_doc(s, app, path2, "pdf")
+    if t:
+        await asyncio.sleep(6)
+        async with s.ws_connect(t["webSocketDebuggerUrl"], max_msg_size=0) as ws:
+            pg = Page(ws)
+            r["form_ready"] = await ready(pg, "pdf")
+            await asyncio.sleep(3)
+            d = fz.open(path2)
+            heads = []
+            for b in d[0].get_text("dict")["blocks"]:
+                for ln in b.get("lines", []):
+                    for sp in ln["spans"]:
+                        if "Bol" in sp["font"] and any(c in sp["text"] for c in "ﻻﻼﻵﻶﻷﻸﻹﻺ"):
+                            heads.append(fz.Rect(sp["bbox"]) + (-3, -2, 3, 2))
+            for scale in (1, 2):
+                vw = await pg.ev("[innerWidth, innerHeight]") or [1200, 800]
+                if scale == 2:
+                    await pg.call("Emulation.setDeviceMetricsOverride", {"width": vw[0], "height": vw[1],
+                                                                         "deviceScaleFactor": 2, "mobile": False})
+                    await asyncio.sleep(4)
+                g = await pg.ev(PDF_GEOM_JS) or {}
+                org, sc = g.get("org") or [0, 0], g.get("sc") or 1
+                for i, rc in enumerate(heads):
+                    box = [org[0] + rc.x0 * sc, org[1] + rc.y0 * sc, org[0] + rc.x1 * sc, org[1] + rc.y1 * sc]
+                    app_png = os.path.join(evid, "bold-heading-%d-dpr%d-app.png" % (i, scale))
+                    await pg.shot(app_png, box, scale=1)
+                    mu = d[0].get_pixmap(matrix=fz.Matrix(sc * scale, sc * scale), clip=rc)
+                    mu.save(os.path.join(evid, "bold-heading-%d-dpr%d-mupdf.png" % (i, scale)))
+                    try:
+                        r["heading_%d_dpr%d" % (i, scale)] = ink_match(ink_mask(fz.Pixmap(app_png)), ink_mask(mu), 2)
+                    except Exception as e:
+                        r["heading_%d_dpr%d" % (i, scale)] = repr(e)
+                if scale == 2:
+                    await pg.call("Emulation.clearDeviceMetricsOverride")
+                    await asyncio.sleep(2)
+            d.close()
     return r
 
 

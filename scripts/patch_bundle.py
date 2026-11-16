@@ -619,8 +619,13 @@ MAC_JS = r"""
           return (c >= 0x0590 && c <= 0x08FF) || (c >= 0x0900 && c <= 0x0DFF) || (c >= 0x0E00 && c <= 0x0EFF) ||
                  (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFF) || c === 0x200C || c === 0x200D;
         };
+        // (what the shim did in the last saves, for the engine checks: fields drawn, glyphs drawn as outlines / left as
+        // text, and why a glyph was left as text)
+        var dbg = window.__xrFieldApDbg = {writes: 0, flagged: 0, outlines: 0, text: 0, why: {}, names: {}, err: ''};
+        var why = function (k) { dbg.why[k] = (dbg.why[k] || 0) + 1; };
         B.WriteRenderToBinary = function (memory) {
           var dr = memory && memory.docRenderer;
+          dbg.writes++;
           if (!dr || window.__xrNoFieldApFix) return origWrite.apply(this, arguments);
           var was = dr.__xrFieldAp;
           dr.__xrFieldAp = true;
@@ -629,27 +634,38 @@ MAC_JS = r"""
         B.WriteRenderToBinary.__xr = true;
         R.tg = function (gid, x, y, codePoints) {
           if (this.__xrFieldAp && this.m_lPagesCount > 0) {
+            dbg.flagged++;
+            var mem = this.Memory, p0 = mem ? mem.pos : -1;
             try {
               var mf = this.m_arrayPages[this.m_lPagesCount - 1], f = mf && mf.m_oFont;
-              if (f && typeof f.Name === 'string' && f.Name.indexOf(prefix) === 0) {
+              var nm = f && typeof f.Name === 'string' ? f.Name : '';
+              if (Object.keys(dbg.names).length < 12) dbg.names[nm] = (dbg.names[nm] || 0) + 1;
+              if (nm.indexOf(prefix) !== 0) why('not an embedded font');
+              else {
                 var cps = codePoints || [], need = cps.length !== 1, tm = C.g_oTextMeasurer;
                 for (var i = 0; !need && i < cps.length; i++) need = complex(cps[i]);
                 // this font, freshly set up in the measurer's own font manager (72 dpi: outlines in mm, as the page)
                 if (tm.m_oLastFont) tm.m_oLastFont.SetUpName = '';
-                var font = tm.SetFontInternal(f.Name, f.FontSize, Math.max(f.Style || 0, 0));
+                var font = tm.SetFontInternal(nm, f.FontSize, Math.max(f.Style || 0, 0));
                 var mgr = tm.m_oManager;
-                if (font && mgr && mgr.m_pFont === font) {
+                if (!font || !mgr || mgr.m_pFont !== font) why('font not set up');
+                else {
                   if (!need) need = font.GetGIDByUnicode(cps[0]) !== gid;
-                  if (need) {
+                  if (!need) why('text: its code point gives it');
+                  else {
                     var g0 = mgr.m_oGlyphString.GetFirstGlyph();
                     g0.fX = 0; g0.fY = 0;
                     mgr.LoadStringPathCode(gid, true, x, y, this);
-                    window.__xrFieldApOutlines = (window.__xrFieldApOutlines || 0) + 1;
-                    return;
+                    // an outline is a path start + its points + a fill + an end: if nothing but the frame was written
+                    // (no outline for this glyph), the glyph goes as text, as before
+                    if (mem && mem.pos - p0 >= 8) { dbg.outlines++; return; }
+                    why('no outline');
+                    if (mem && mem.pos > p0) mem.pos = p0;
                   }
                 }
               }
-            } catch (e) { window.__xrFieldApErr = '' + e; }
+            } catch (e) { dbg.err = '' + e; why('error'); if (mem && mem.pos > p0) mem.pos = p0; }
+            dbg.text++;
           }
           return origTg.apply(this, arguments);
         };

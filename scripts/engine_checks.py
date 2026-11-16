@@ -103,6 +103,16 @@ LOCAL_SESSION_JS = r"""new Promise(function(done){try{localStorage.setItem('xr-a
   var o=document.getElementById('xr-acct-ov'); if(o) o.parentNode.removeChild(o);}catch(e){done('error: '+e);return;}
   setTimeout(function(){done(document.getElementById('xr-acct-ov')?'card came back':'open');},2500);})"""
 
+# can this editor draw a glyph of the field's (embedded) font as an outline? (the XR-FIELD-AP shim does that on Save)
+OUTLINE_PROBE_JS = r"""(function(){""" + FRAME + r"""try{var a=api.getPDFDoc().widgets.filter(function(x){return x.GetFullName()==='client';})[0];
+  var nm=a.GetTextFontActual(),tm=w.AscCommon.g_oTextMeasurer;if(tm.m_oLastFont)tm.m_oLastFont.SetUpName='';
+  var font=tm.SetFontInternal(nm,14,0),mgr=tm.m_oManager,n={};function c(k){return function(){n[k]=(n[k]||0)+1;};}
+  var wk={_s:c('s'),_m:c('m'),_l:c('l'),_c:c('c'),_c2:c('c2'),_z:c('z'),df:c('df'),_e:c('e')};
+  var gid=font?font.GetGIDByUnicode(0x0628):-1;var g0=mgr.m_oGlyphString.GetFirstGlyph();g0.fX=0;g0.fY=0;
+  mgr.LoadStringPathCode(gid,true,0,0,wk);
+  return {font:nm,loaded:!!font,same:mgr.m_pFont===font,gid:gid,calls:n,engine:typeof w.AscFonts.FT_Glyph_Get_Measure};
+  }catch(e){return 'error: '+e;}})()"""
+
 SLIDE_JS = r"""(function(op){""" + FRAME + r"""var o={};
   try{var wc=api.WordControl,p=wc.m_oLogicDocument;
     if(!w.__xrLangHook){w.__xrLangs=[];api.asc_registerCallback('asc_onTextLanguage',function(v){w.__xrLangs.push(v);});w.__xrLangHook=1;}
@@ -411,6 +421,7 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
             typed[name] = got
             if name == "client":
                 r["caret"] = await pg.ev(CARET_JS)
+                r["outline_probe"] = await pg.ev(OUTLINE_PROBE_JS)      # (after typing: the field's font is loaded)
                 await pg.shot(os.path.join(evid, "pdf-%s-live-typing.png" % variant), box_of([px], 30))
         r["typed"] = typed
         g = await pg.ev(PDF_GEOM_JS) or {}
@@ -418,6 +429,7 @@ async def case_pdf_ar_field(s, app, evid, variant, ok, out):
         await pg.shot(os.path.join(evid, "pdf-%s-live.png" % variant), fbox)
         r["saved"] = await save(pg, path)
         r["modified_after_save"] = (await pg.ev(PDF_GEOM_JS) or {}).get("modified")
+        r["shim"] = await pg.ev("(function(){" + FRAME + "return w.__xrFieldApDbg||null;})()")
     # the saved file, read and drawn by PyMuPDF
     font = dr_font(src, "PlexAr", evid)
     try:

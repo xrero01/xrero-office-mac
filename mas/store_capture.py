@@ -1070,8 +1070,13 @@ if MODE in ("shots", "switch"):
         bad.append("account pill %s over %s" % (sp.get("pill_side"), sp.get("pill_over_sidebar")))
     if sp.get("pill_card_gap") is None or sp["pill_card_gap"] < 12:
         bad.append("account pill too close to the cards: %s px" % sp.get("pill_card_gap"))
-    if LANG == "ar" and sp.get("latin_ui"):     # the Arabic start page: no English left (Xrero / PDF / extensions are fine)
-        bad.append("English on the Arabic start page: %s" % sp.get("latin_ui"))
+    # the Arabic start page: no English left (Xrero / PDF / extensions are fine). The account's name is the user's own
+    # data, not interface text: switch keeps the account signed in under audit's English name ("Projects team") and
+    # the interface must not translate it (run 29 failed on it; the shots pictures sign in with the Arabic name)
+    acct_name = (sp.get("pill") or "").split("|", 1)[-1]
+    left_ui = [t for t in sp.get("latin_ui") or [] if t != acct_name]
+    if LANG == "ar" and left_ui:
+        bad.append("English on the Arabic start page: %s" % left_ui)
 if MODE == "shots":
     if len(sp.get("recents") or []) < 4 or not all("data:image/webp" in x for x in sp.get("recents") or []):
         bad.append("recent files on the start picture (4, kit pictures): %s" % sp.get("recents"))

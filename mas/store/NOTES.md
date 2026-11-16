@@ -1,4 +1,4 @@
-# Mac App Store pictures - notes (16 Nov 2026, round 4)
+# Mac App Store pictures - notes (16 Nov 2026, round 4, final captions)
 
 Five pictures per language, in the listing's order (`mas/mas_metadata.py` SHOTS):
 
@@ -218,12 +218,42 @@ does not contradict the pictures, so it is left for the owner. Round 4's review 
 description and promotional text still say "free" / "مجاني" (a price word the captions no longer use, Apple 2.3.7)
 and name the engine (an AGPL licence credit): also the owner's text, unchanged here; suggested to the owner.
 
-Captions round 4 (`store_new_icons/compose.js`; round 3 kept as `compose_2026-11-16f.js`): one size for every
+Captions, round 4 final (`store_new_icons/compose.js`; round 4 kept as `compose_2026-11-16g.js`). Round 4 scored
+8.5 / 8.5 / 8.5 with minor items only; these are caption changes on the same run-38 windows (`prep.py` run again on
+the run-38 captures gives byte-identical windows; the seven pictures whose captions did not change come out
+byte-identical too, so only the three below changed):
+- **Presentation headline** = what the main slide shows. Round 4's "Presentations with shapes and charts" /
+  "عروض تقديمية بأشكال ورسوم بيانية" described the deck, but the slide in the picture is the bilingual title slide and
+  the chart is only a thumbnail in the side panel. Now "Bilingual presentations" / "عروض تقديمية ثنائية اللغة" (not
+  "Arabic and English" again: that stays picture 1's alone, and compose.js checks it), and the line names the rest:
+  "Title slides in two languages, with shapes and charts, saved as .pptx." / "شرائح عنوان بلغتين، وأشكال ورسوم بيانية،
+  تُحفظ بتنسيق pptx." ("بلغتين", so "ثنائية اللغة" is not said twice; no "مع" for "with", as in round 3).
+- **Arabic start headline**: "جداول بيانات", as picture 2's headline and the start page's card say (round 4 had the
+  bare "جداول"). Now "مستندات وجداول بيانات وعروض تقديمية". At the one headline size the four-part form "مستندات
+  وجداول بيانات وعروض تقديمية وملفات PDF" is 2403 px, over the 2200 px headline column (compose.js refuses it); "وPDF"
+  is the "و" glued to a Latin word; a bare "عروض" would be the same fault as the bare "جداول"; singular card names
+  ("مستند وجدول بيانات وعرض تقديمي وملف PDF", 2099 px) or a list without "و" read less naturally. PDF keeps its own
+  picture (4) and its card in this one; the English start headline still names it ("Documents, spreadsheets,
+  presentations and PDF", 2178 px). compose.js now refuses an Arabic headline with "جداول" not followed by "بيانات".
+
+The ten captions now (headline / line; widths at the one size: headline 100 px Cairo 800, column 2200 px; line
+48 px Cairo 500, column 2640 px):
+
+| Picture | en-US | ar-SA |
+|---------|-------|-------|
+| 1 document | Arabic and English in one document / Right-to-left headings, paragraphs and numbered lists in a .docx file. | العربية والإنجليزية في مستند واحد / عناوين وفقرات وقوائم مرقّمة من اليمين إلى اليسار في ملف docx. |
+| 2 spreadsheet | Spreadsheets with formulas and charts / Totals with SUM and a column chart of the table, in Arabic or English sheets. | جداول بيانات بالصيغ والرسوم البيانية / إجماليات بالدالة SUM ورسم بياني عمودي للجدول، في أوراق عمل بالعربية أو الإنجليزية. |
+| 3 presentation | Bilingual presentations / Title slides in two languages, with shapes and charts, saved as .pptx. | عروض تقديمية ثنائية اللغة / شرائح عنوان بلغتين، وأشكال ورسوم بيانية، تُحفظ بتنسيق pptx. |
+| 4 PDF | Fill in and annotate PDF files / Type into forms, tick boxes, highlight text and add notes. | املأ نماذج PDF وعلّق عليها / اكتب في النماذج وحدّد الخيارات وظلّل النص وأضف الملاحظات. |
+| 5 start page | Documents, spreadsheets, presentations and PDF / Arabic-first. Sign in with your Xrero account; your files stay on your Mac. | مستندات وجداول بيانات وعروض تقديمية / العربية أولاً. سجّل الدخول بحساب Xrero، وتبقى ملفاتك على جهاز Mac. |
+
+Captions round 4 (round 3 kept as `compose_2026-11-16f.js`): one size for every
 headline and every line under it - a line that does not fit is an error in compose.js, not set smaller (round 3's
-Arabic start headline was shrunk to 87 % of the others; now "مستندات وجداول وعروض تقديمية وملفات PDF"). "صيغة" (file
+Arabic start headline was shrunk to 87 % of the others; round 4 made it "مستندات وجداول وعروض تقديمية وملفات PDF",
+changed again above). "صيغة" (file
 format) is no longer under "الصيغ" (formulas): the sheet line names SUM and the chart, and the format is named only in
 the document line ("في ملف docx") and the presentation line ("بتنسيق pptx"). "Arabic and English" is in one headline
-only (the presentation headline is now "Presentations with shapes and charts" / "عروض تقديمية بأشكال ورسوم بيانية"),
+only (round 4's presentation headline was "Presentations with shapes and charts" / "عروض تقديمية بأشكال ورسوم بيانية"),
 and each line says what its picture shows (headings in the document, SUM totals and the column chart, bilingual title
 slides). The start line is natural Arabic: "العربية أولاً. سجّل الدخول بحساب Xrero، وتبقى ملفاتك على جهاز Mac." (it
 began with the bare participle "مصمم", and put the noun before the verb).

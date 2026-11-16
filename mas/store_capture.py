@@ -38,6 +38,8 @@ Window size (16 Nov 2026 review): the spreadsheet and presentation ribbons folde
 """
 import asyncio, base64, json, os, plistlib, re, shutil, subprocess, sys, time
 import aiohttp
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+from engine_checks import INPUT_LOG_JS        # (the editor's text input path, logged while the form is filled)
 
 APP, MODE, LANG, OUT, SRC = sys.argv[1:6]
 APP, OUT, SRC = os.path.abspath(APP), os.path.abspath(OUT), os.path.abspath(SRC)
@@ -925,6 +927,9 @@ async def prep_pdf(pg):
     if pre.get("focus"):
         await pg.click(*pre["focus"])
         await asyncio.sleep(1.5)
+    # (16 Nov 2026, engine fixes) the editor's text input path while the form is filled (scripts/engine_checks.py
+    # INPUT_LOG_JS): the date field's first input was lost in the Arabic form (runs 23-38); the log shows where
+    o_inlog = await pg.ev(INPUT_LOG_JS)
     # the frame's errors while the form is filled (diagnosis of a field that does not keep what is typed)
     await pg.ev("(function(){" + FRAME + "w.__xrErr=[];var ce=w.console.error;w.console.error=function(){try{w.__xrErr.push("
                 "[].slice.call(arguments).map(String).join(' ').slice(0,240));}catch(e){}return ce.apply(this,arguments);};"
@@ -964,6 +969,8 @@ async def prep_pdf(pg):
     await asyncio.sleep(1.5)
     o = await pg.ev(PDF_STATE_JS) or {}
     o["prep"], o["steps"], o["marks"] = pre, steps, marks
+    o["input_log_installed"] = o_inlog
+    o["input_log"] = await pg.ev("(function(){" + FRAME + "return (w.__xrInLog||[]).slice(-150);})()")
     o["annots_full"] = await pg.ev(PDF_ANNOTS_JS)
     o["popover"] = await ctrl(pg, "#id-popover")
     o["errors"] = await pg.ev("(function(){" + FRAME + "return (w.__xrErr||[]).slice(0,30);})()")
@@ -1557,6 +1564,11 @@ if MODE == "shots":
                        "field %s)" % (note_ok, nt, bx, ring_ok, ink, dt))
     except Exception as e:
         bad.append("PDF marks not measured: %s" % e)
+    # (16 Nov 2026, engine fixes) every field got its first input: the capture had to type the start again (the
+    # Arabic date field's first input was lost, runs 23-38: "retyped start" / "typed again")
+    lost = [st for st in (pi.get("steps") or []) if isinstance(st, list) and st and re.search(r"retyped start|typed again", str(st[0]))]
+    if lost:
+        bad.append("PDF form: the first input typed into a field did not arrive: %s" % json.dumps(lost, ensure_ascii=False)[:600])
     rt = res.get("pdf_roundtrip") or {}
     print("PDF round trip (save, file, reopen):", "OK" if rt.get("ok") else "NOT OK", rt.get("checks"))
     # (run 28: the boxes ticked with Enter were "Off" in the saved file) the store text says "form filling" only if

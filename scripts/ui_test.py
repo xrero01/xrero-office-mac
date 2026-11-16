@@ -307,6 +307,15 @@ async def main():
         time.sleep(5)
     except Exception: pass
     if proc.poll() is None: proc.kill()
+    # (16 Nov 2026) the document-engine checks in a second session of the app (scripts/engine_checks.py: Arabic typed
+    # into a PDF form field saved shaped, the first input of a form field kept, ar-AE reported as ar-AE, the bold
+    # lam-alef drawing recorded); evidence in <out>/engine-<arch>/
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import engine_checks
+        await engine_checks.run(EXE, APP, ARCH, OUT, ok)
+    except Exception as e:
+        ok("engine_checks_ran", False, "%s: %s" % (type(e).__name__, e))
     # the test account goes again (log in for a token, then delete with the password - the app's own Delete account path)
     if res.get("test_account"):
         try:

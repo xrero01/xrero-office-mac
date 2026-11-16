@@ -252,6 +252,8 @@ START_JS = """(function(){var its=[].slice.call(document.querySelectorAll('#area
       var t=e.querySelector('.col-date');return ((t&&t.innerText)||'').trim();}),
     locs:[].slice.call(document.querySelectorAll('#box-recent .file-list-body .row')).filter(vis).map(function(e){
       var t=e.querySelector('.col-location');return ((t&&t.innerText)||'').trim();}),
+    loc_bidi:(function(){var t=document.querySelector('#box-recent .file-list-body .row .col-location');
+      return t?getComputedStyle(t).unicodeBidi:'';})(),
     date_head:((document.querySelector('#box-recent .file-list-head .col-date')||document.querySelector('#box-recent .col-date')||{}).innerText||'').trim(),
     cards_bg:its.map(function(e){return getComputedStyle(e,'::before').backgroundImage.slice(27,60);}), xr_ar:document.documentElement.classList.contains('xr-ar'),
     latin_ui:latin(), wall:!!document.getElementById('xr-acct-ov')};
@@ -1090,6 +1092,9 @@ if MODE == "shots":
     # (run 28) the Recent files' folder is the neutral shared one, not the CI checkout
     if (sp.get("locs") or []) and not all("Shared/Office files" in x for x in sp.get("locs")):
         bad.append("recent files' folder on the start picture: %s" % sp.get("locs"))
+    # (run 29) in the Arabic start page the path keeps its own direction (web/xr-home.js), not "Users/.../Office files/"
+    if LANG == "ar" and (sp.get("locs") or []) and sp.get("loc_bidi") != "plaintext":
+        bad.append("Arabic Recent files' folder not laid out from its own text: %r" % sp.get("loc_bidi"))
     for tag, m in (res.get("more_final") or {}).items():
         if not m or m.get("more") is not False:
             bad.append("%s picture: ribbon groups folded into More (window %s): %s" % (tag, res.get("picture_window"), m))

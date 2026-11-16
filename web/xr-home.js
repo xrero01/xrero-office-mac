@@ -54,6 +54,10 @@
       }).join(',');
     }).join(',') + '{display:none}' +
     '.file-list-body .col-name i.img-format{display:none!important}' +
+    // a file's folder in the right-to-left Recent files (16 Nov 2026, store pictures run 29): the path took the page's
+    // direction, so "/Users/Shared/Office files" read "Users/Shared/Office files/" (its first slash at the far end).
+    // The path now takes its direction from its own first letter and stays right aligned like the column head
+    '.rtl .file-list-body .col-location,html.xr-ar .file-list-body .col-location{unicode-bidi:plaintext;text-align:right}' +
     // the start page's blue buttons and links -> Xrero teal
     '.dnd-zone .content button,#area-dnd-file button{background:#0585A1!important;border-color:#0585A1!important;color:#fff!important}' +
     '.dnd-zone .content button:hover,#area-dnd-file button:hover{background:#046B82!important;border-color:#046B82!important}' +

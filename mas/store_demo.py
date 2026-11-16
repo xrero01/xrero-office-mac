@@ -266,7 +266,9 @@ def make_sheet(path, lang):
     # engine drew as an empty bar chart (local x2t preview, 16 Nov 2026)
     ch = BarChart()
     ch.add_data(Reference(ws, min_col=2, max_col=4, min_row=4, max_row=7), titles_from_data=True)
-    ch.width, ch.height = 11.0, 8.4       # (run 23: table + chart wider than the Arabic window - the chart's far side was cut)
+    # (run 23: table + chart wider than the 1024 pt Arabic window - the chart's far side was cut; run 29: the pictures'
+    # window is 1376 pt wide and the 11 cm chart left five empty columns beside it - 16 x 9.4 cm fills them)
+    ch.width, ch.height = 16.0, 9.4
     ws.add_chart(ch, "G3")
     wb.properties.creator = wb.properties.lastModifiedBy = "Xrero"
     wb.properties.title = c["chart"]

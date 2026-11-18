@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: Xrero Office version
-        default: "20.0.9"
+        default: "21.0"
       from:
         description: build-mac release tag holding XreroOffice-<version>-mac-<arch>-signed-app.zip
         required: true
@@ -85,7 +85,8 @@ jobs:
           rm -rf test/fonts-* || true
           ditto -c -k --keepParent test "test-evidence-$V.zip" || true
           ls *.dmg >/dev/null 2>&1 || exit 0
-          gh release create "mac-$V-notarized-r${GITHUB_RUN_NUMBER}" --prerelease \
+          # --target: the tag points at the commit of this run (without it GitHub tags the default branch's head)
+          gh release create "mac-$V-notarized-r${GITHUB_RUN_NUMBER}" --prerelease --target "$GITHUB_SHA" \
             --title "Xrero Office $V for macOS (notarized, finalize ${GITHUB_RUN_NUMBER})" \
             --notes "From ${{ inputs.from }}. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 "test-evidence-$V.zip" 2>/dev/null)

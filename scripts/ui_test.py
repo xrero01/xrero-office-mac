@@ -2,16 +2,31 @@
 """ui_test.py <Xrero Office.app> <arm64|x86_64> <test dir> <out dir>
 Launches the real app (DevTools port 9222), screenshots the start page, opens a document, types English + Arabic,
 presses Enter / Cmd+B / Cmd+S, verifies the text and the saved file, checks the Windows-only header buttons are
-hidden and the start page has no sign-in wall / ONLYOFFICE text. Writes <out>/ui-<arch>.json + PNGs."""
+hidden and the start page has no sign-in wall / ONLYOFFICE text. Writes <out>/ui-<arch>.json + PNGs.
+
+Xrero account (18 Nov 2026): NO account is created on xrero.com unless XR_UI_TEST_CREATE_ACCOUNT=1 is set (and
+XR_NO_SIGNUP is not). Without it the account wall + the made-up sign-in (xrero.com's own "Invalid email or password")
+are still checked, then the stored state of a signed-in user is written locally (the XR_NO_SIGNUP path, also used by
+scripts/engine_checks.py) so the start page, About, the editors and the engine checks still run; the server sign-up and
+the delete of that account are listed under "skipped" in ui-<arch>.json."""
 import asyncio, base64, json, os, plistlib, shutil, subprocess, sys, time
 import aiohttp
 
 APP, ARCH, TDIR, OUT = sys.argv[1:5]
 APP, TDIR, OUT = os.path.abspath(APP), os.path.abspath(TDIR), os.path.abspath(OUT)
-EXE = os.path.join(APP, "Contents", "MacOS", plistlib.load(open(os.path.join(APP, "Contents", "Info.plist"), "rb"))["CFBundleExecutable"])
+PLIST = plistlib.load(open(os.path.join(APP, "Contents", "Info.plist"), "rb"))
+EXE = os.path.join(APP, "Contents", "MacOS", PLIST["CFBundleExecutable"])
 PORT = 9222
+CREATE_ACCOUNT = os.environ.get("XR_UI_TEST_CREATE_ACCOUNT") == "1" and not os.environ.get("XR_NO_SIGNUP")
+if not CREATE_ACCOUNT:
+    os.environ["XR_NO_SIGNUP"] = "1"      # read by scripts/engine_checks.py (second app session): local session too
 os.makedirs(OUT, exist_ok=True)
-res = {"arch": ARCH, "checks": {}, "shots": []}
+res = {"arch": ARCH, "checks": {}, "shots": [], "skipped": [],
+       "account_mode": "real xrero.com test account (XR_UI_TEST_CREATE_ACCOUNT=1)" if CREATE_ACCOUNT
+                       else "no account created on xrero.com (local signed-in state)",
+       "info_plist": {k: PLIST.get(k) for k in ("CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion",
+                                                 "LSMinimumSystemVersion", "CFBundleExecutable")}}
+print("Info.plist:", json.dumps(res["info_plist"]), "| account:", res["account_mode"], flush=True)
 
 def ok(name, cond, detail=""):
     res["checks"][name] = {"pass": bool(cond), "detail": detail}
@@ -151,11 +166,14 @@ async def main():
                 if(s||++n>40){clearInterval(t);done(s);}},250);})""")
             ok("account_server_answer", ans and "Invalid email or password" in ans, repr(ans))
             screencap("01d-account-answer")
-            if os.environ.get("XR_NO_SIGNUP"):
+            if not CREATE_ACCOUNT:
                 # 16 Nov 2026: runs that must not create accounts on xrero.com (test-only builds, store pictures): the
                 # stored state of a signed-in user is written locally instead (what the card writes after a sign-in;
                 # the pages share it). The sign-up itself is NOT exercised here - listed under "skipped".
-                res.setdefault("skipped", []).append("account_create_opens_app (XR_NO_SIGNUP: no account made on xrero.com)")
+                # 18 Nov 2026: this is the DEFAULT now - a real account only with XR_UI_TEST_CREATE_ACCOUNT=1.
+                res["skipped"].append("account_create_opens_app (no account made on xrero.com; XR_UI_TEST_CREATE_ACCOUNT=1 to run it)")
+                res["skipped"].append("test_account_deleted (no test account was made)")
+                res["skipped"].append("account_signed_in_pill with a server-issued account (the pill is checked with the local signed-in state)")
                 made = await pg.ev("""new Promise(function(done){try{localStorage.setItem('xr-acct-token','local-ui-test');
                   localStorage.setItem('xr-acct',JSON.stringify({locked:false,name:'Mac Store Check',email:'mac-check@example.invalid'}));
                   var o=document.getElementById('xr-acct-ov'); if(o) o.parentNode.removeChild(o);}catch(e){done('error: '+e);return;}
@@ -180,7 +198,8 @@ async def main():
             # the pill = the account's initials (teal circle) + its name
             pill = await pg.ev("""(function(){var p=document.getElementById('xr-acct-start');if(!p)return '';
               return [(p.querySelector('.av')||{}).textContent||'', (p.querySelector('.nm')||{}).textContent||''].join('|');})()""")
-            ok("account_signed_in_pill", pill == "MC|Mac Store Check", repr(pill))
+            ok("account_signed_in_pill", pill == "MC|Mac Store Check",
+               repr(pill) + ("" if CREATE_ACCOUNT else " (local signed-in state, no xrero.com account)"))
             # the four apps = the start page's own cards, as on Windows (DOCX, XLSX, PPTX, PDF): all four whole, no scroll bar
             tiles = await pg.ev("""(function(){var g=document.getElementById('area-document-creation-grid');
               var its=[].slice.call(document.querySelectorAll('#area-document-creation-grid .document-creation-item'));
@@ -333,5 +352,6 @@ async def main():
 asyncio.run(main())
 res["passed"] = sum(1 for c in res["checks"].values() if c["pass"]); res["total"] = len(res["checks"])
 json.dump(res, open(os.path.join(OUT, "ui-%s.json" % ARCH), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-print("UI %s: %d/%d" % (ARCH, res["passed"], res["total"]))
+print("UI %s: %d/%d (skipped: %d%s)" % (ARCH, res["passed"], res["total"], len(res["skipped"]),
+      "".join("\n  SKIPPED " + s for s in res["skipped"])))
 sys.exit(0 if res["passed"] == res["total"] else 4)

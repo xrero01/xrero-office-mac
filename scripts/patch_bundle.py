@@ -271,10 +271,17 @@ def nib_hide_outlets(b, outlets):
 
 
 hide_hits = 0
+box_nibs = 0     # the NIBArchive storyboard variants that have the box (arm64: 1; x86_64: 3, one per macOS version)
 for nib in nibs:
     b = open(nib, "rb").read()
     if b"downloadBackgroundView" not in b:
         continue
+    if b[:10] != b"NIBArchive":
+        # (x86_64) keyedobjects.nib = the keyed-archive (bplist) fallback, used only below macOS 10.13 (the -101300 /
+        # -101400 / -110000 variants cover 10.13 and later); left as it is, like the tab logo above
+        log("title bar: keyed-archive storyboard variant left as it is (used only before macOS 10.13):", os.path.relpath(nib, RES))
+        continue
+    box_nibs += 1
     r = nib_hide_outlets(b, ("downloadBackgroundView",))
     if not r:
         continue
@@ -288,8 +295,10 @@ for nib in nibs:
     hide_hits += r[1]
     log("title bar: download box archived hidden, account button pictures transparent:", os.path.relpath(nib, RES),
         len(b), "->", len(nb), "bytes")
-if hide_hits != 1:
-    raise SystemExit("title bar download box: %d found in the storyboard" % hide_hits)
+# (18 Nov 2026, build-mac run 45: the x86_64 bundle carries the title bar in 3 NIBArchive storyboard variants -
+# keyedobjects-110000 / -101300 / -101400 - and each one is patched; arm64 has one) every variant with the box is hidden
+if box_nibs < 1 or hide_hits != box_nibs:
+    raise SystemExit("title bar download box: %d hidden in %d storyboard variants" % (hide_hits, box_nibs))
 
 
 def blank_png(w, h):
@@ -426,6 +435,10 @@ for f in glob.glob(os.path.join(E, "web-apps", "apps", "*", "main", "locale", "a
     t2 = t.replace('"تعداد الكلمات"', '"عدد الكلمات"')
     if t2 != t:
         open(f, "w", encoding="utf-8").write(t2)
+        n_ar += 1
+    elif '"عدد الكلمات"' in t:
+        # (18 Nov 2026) payload-21.0: the Windows 21.0 documenteditor ar.json already says "عدد الكلمات" - done
+        log("Arabic wording (word count): already in", os.path.relpath(f, E))
         n_ar += 1
 AI_AR = "الذكاء الاصطناعي"
 for f in glob.glob(os.path.join(E, "sdkjs-plugins", "*", "translations", "ar-SA.json")):

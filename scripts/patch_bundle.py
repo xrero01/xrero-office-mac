@@ -527,6 +527,13 @@ if "/*XR-ACCT-START*/" not in ACCT_JS or "/*XR-ACCT-END*/" not in ACCT_JS:
     raise SystemExit("web/xr-account.js markers missing")
 HOME_JS = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "xr-home.js"), encoding="utf-8").read()
 HOME_JS = HOME_JS.replace("__XR_VERSION__", VERSION)          # the Mac app's own version in the About window
+# (18 Nov 2026) and its architecture: the Intel website build said "Apple silicon" too (build-mac run 46, x86_64)
+ARCH_LABEL = {"arm64": "Apple silicon", "x86_64": "Intel"}.get(os.environ.get("XR_ARCH", "arm64"))
+if not ARCH_LABEL or "__XR_ARCH__" not in HOME_JS:
+    raise SystemExit("About architecture: XR_ARCH=%r, placeholder in web/xr-home.js: %s"
+                     % (os.environ.get("XR_ARCH"), "__XR_ARCH__" in HOME_JS))
+HOME_JS = HOME_JS.replace("__XR_ARCH__", ARCH_LABEL)
+log("About window architecture:", ARCH_LABEL)
 if "/*XR-HOME-START*/" not in HOME_JS or "/*XR-HOME-END*/" not in HOME_JS:
     raise SystemExit("web/xr-home.js markers missing")
 MAC_JS = r"""

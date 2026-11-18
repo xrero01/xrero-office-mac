@@ -216,10 +216,14 @@ async def main():
             ab = await pg.ev("""new Promise(function(done){var a=document.querySelector('.tool-menu a[action="about"]');
               if(!a){done({item:false});return;} var li=a.closest('li'); var vis=getComputedStyle(li).display!=='none';
               a.click(); setTimeout(function(){var d=document.querySelector('dialog.dlg-about');
-                var t=d?d.innerText:''; var r={item:vis, open:!!(d&&d.open), name:/Xrero Office/.test(t), version:(t.match(/[0-9]+[.][0-9]+.*Apple silicon/)||[''])[0],
+                var t=d?d.innerText:''; var r={item:vis, open:!!(d&&d.open), name:/Xrero Office/.test(t), version:(t.match(/[0-9]+[.][0-9]+.*(Apple silicon|Intel)/)||[''])[0],
                   agpl:/AGPL/.test(t), source:/Source|المصدرية/.test(t)};
                 try{d.close();}catch(e){} done(r);},1200);})""")
-            ok("about_in_sidebar", ab and ab.get("item") and ab.get("open") and ab.get("name") and ab.get("version") and ab.get("agpl") and ab.get("source"), json.dumps(ab, ensure_ascii=False))
+            # (18 Nov 2026) the architecture shown must be this build's: "Apple silicon" (arm64) / "Intel" (x86_64)
+            arch_label = "Intel" if ARCH == "x86_64" else "Apple silicon"
+            ok("about_in_sidebar", ab and ab.get("item") and ab.get("open") and ab.get("name") and ab.get("version")
+               and ab.get("version", "").endswith(arch_label) and ab.get("agpl") and ab.get("source"),
+               json.dumps(ab, ensure_ascii=False) + " (expected: %s)" % arch_label)
             await pg.ev("(function(){var a=document.querySelector('.tool-menu a[action=\"about\"]'); if(a) a.click();})()")
             await asyncio.sleep(1.5)
             screencap("01f-about")

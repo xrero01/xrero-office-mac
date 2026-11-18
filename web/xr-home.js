@@ -75,6 +75,7 @@
   // it hidden until the Windows shell sends its version; on Mac nothing does (the native About is in the app menu), so
   // the item is shown here and opens the same About window with the Mac app's own version.
   var VERSION = '__XR_VERSION__';
+  var ARCH = '__XR_ARCH__';            // 'Apple silicon' or 'Intel' (patch_bundle.py, from build_mac.sh's architecture)
   function isAr() {
     // the page's ?lang= (the app's interface language) before the editors' last 'xr-lang' (see xr-account.js lang())
     try { var l = (new URLSearchParams(location.search).get('lang') || '').toLowerCase(); if (l) return l.indexOf('ar') === 0; } catch (e) {}
@@ -83,8 +84,8 @@
   }
   function aboutBody() {
     var ar = isAr();
-    var t = ar ? { ver: 'الإصدار', lic: 'مرخّص بموجب', src: '</> الشيفرة المصدرية', rights: '© Xrero 2026. جميع الحقوق محفوظة.', arch: 'Apple silicon' }
-               : { ver: 'Version', lic: 'Licensed under', src: '</> Source', rights: '© Xrero 2026. All rights reserved.', arch: 'Apple silicon' };
+    var t = ar ? { ver: 'الإصدار', lic: 'مرخّص بموجب', src: '</> الشيفرة المصدرية', rights: '© Xrero 2026. جميع الحقوق محفوظة.', arch: ARCH }
+               : { ver: 'Version', lic: 'Licensed under', src: '</> Source', rights: '© Xrero 2026. All rights reserved.', arch: ARCH };
     var esc = function (x) { return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
     return '<div class="flexbox"><div class="box-ver">' +
       '<section class="hbox"><div id="idx-about-cut-logo"><svg class="ver-logo">' +

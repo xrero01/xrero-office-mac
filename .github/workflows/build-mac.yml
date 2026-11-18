@@ -4,10 +4,10 @@ on:
     inputs:
       version:
         description: Xrero Office version
-        default: "20.0.9"
+        default: "21.0"
       payload:
         description: release tag holding xrero-payload.zip
-        default: "payload-20.0.9"
+        default: "payload-21.0"
       intel:
         description: also build the Intel (x86_64) dmg
         type: boolean

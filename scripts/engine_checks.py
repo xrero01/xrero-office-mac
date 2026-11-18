@@ -31,6 +31,11 @@ input into the editor, Cmd+S, a copy opened again from Finder) and the saved fil
                  the PNGs are the evidence.
   pptx_lang      mas/store_demo_slides_ar.pptx: the caret in the Arabic title (lang="ar-AE") - the language the editor
                  reports (status bar) must be ar-AE (LCID 14337), not ar-SA (store NOTES).
+  pdf_comment_date  (18 Nov 2026, 21.0) RECORD ONLY: a comment added to mas/store_demo_form.pdf through the editor's own
+                 comment API (the comment data and time as the Comments controller makes them), saved with Cmd+S; the
+                 saved comment's /CreationDate and /M are read with PyMuPDF. 20.2 and older wrote them as 27 Dec 1969
+                 (APP-BACKLOG 30: a 32-bit Long on the way to the converter); payload-21.0 carries XR-PDF-DATE64 from
+                 Windows 21.0. Evidence for the What's New line only - it does not gate the build.
 """
 import asyncio, base64, json, os, re, shutil, subprocess, sys, time
 import aiohttp
@@ -739,6 +744,64 @@ async def case_pptx_lang(s, app, evid, out):
     return r
 
 
+COMMENT_DATE_JS = r"""(function(op){""" + FRAME + r"""var o={};try{
+  var C=w.AscDFH&&w.AscDFH.changesFactory&&w.AscDFH.changesFactory[w.AscDFH.historyitem_Pdf_Annot_Creation_Date];
+  o.date64_in_editor=!!(C&&String(C.prototype.WriteToBinary).indexOf('nFlags = 8')>=0);
+  if(op==='add'){var c=(typeof w.Asc.asc_CCommentDataWord!=='undefined')?new w.Asc.asc_CCommentDataWord(null):new w.Asc.asc_CCommentData(null);
+    var now=new Date();o.now_ms=now.getTime();
+    c.asc_putText('Xrero 21.0 date check');c.asc_putTime(String(now.getTime()));c.asc_putOnlyOfficeTime(String(now.getTime()));
+    c.asc_putUserId('xr-date-check');c.asc_putUserName('Mac Date Check');c.asc_putSolved(false);
+    if(c.asc_putDocumentFlag)c.asc_putDocumentFlag(false);
+    o.id=api.asc_addComment(c)||null;}
+  var doc=api.getPDFDoc(),n=0;try{(doc.GetAllAnnots?doc.GetAllAnnots():[]).forEach(function(a){if(a.IsComment&&a.IsComment())n++;});}catch(e){}
+  o.comments_in_doc=n;}catch(e){o.err=''+e;}return o;})(__OP__)"""
+
+
+async def case_pdf_comment_date(s, app, evid, out):
+    """RECORD ONLY (see the module notes): a comment added to a PDF and saved keeps today's date, not 27 Dec 1969"""
+    src = os.path.join(ROOT, "mas", "store_demo_form.pdf")
+    path = os.path.join(evid, "comment-date.pdf")
+    shutil.copy(src, path)
+    r = {"note": "record only (What's New evidence; does not gate the build)"}
+    t = await open_doc(s, app, path, "pdf")
+    if not t:
+        r["err"] = "did not open"
+        return r
+    await asyncio.sleep(6)
+    async with s.ws_connect(t["webSocketDebuggerUrl"], max_msg_size=0) as ws:
+        pg = Page(ws)
+        r["ready"] = await ready(pg, "pdf")
+        r["wall"] = await pg.ev(WALL_JS)
+        if r["wall"] is not False:
+            return r
+        r["add"] = await pg.ev(COMMENT_DATE_JS.replace("__OP__", json.dumps("add")))
+        await asyncio.sleep(2)
+        r["after"] = await pg.ev(COMMENT_DATE_JS.replace("__OP__", json.dumps("read")))
+        await pg.shot(os.path.join(evid, "pdf-comment-date.png"))
+        r["saved"] = await save(pg, path)
+    try:
+        fz = _pymupdf()
+        doc = fz.open(path)
+        found = []
+        for pno in range(len(doc)):
+            for a in doc[pno].annots() or []:
+                info = a.info or {}
+                found.append({"page": pno, "type": a.type[1] if a.type else None, "content": info.get("content", "")[:60],
+                              "author": info.get("title", ""), "creationDate": info.get("creationDate", ""),
+                              "modDate": info.get("modDate", ""),
+                              "raw_CreationDate": doc.xref_get_key(a.xref, "CreationDate"),
+                              "raw_M": doc.xref_get_key(a.xref, "M")})
+        doc.close()
+        r["saved_annots"] = found
+        mine = [f for f in found if "date check" in (f.get("content") or "")]
+        yr = time.strftime("%Y")
+        r["date_ok"] = bool(mine) and all(("D:" + yr) in (f["creationDate"] + f["modDate"]) and "1969" not in
+                                          (f["creationDate"] + f["modDate"]) for f in mine)
+    except Exception as e:
+        r["read_err"] = "%s: %s" % (type(e).__name__, e)
+    return r
+
+
 async def run(exe, app, arch, out_dir, ok):
     """a second app session: the cases above; ok(name, cond, detail) records a check of the UI test"""
     evid = os.path.join(out_dir, "engine-%s" % arch)
@@ -792,6 +855,12 @@ async def run(exe, app, arch, out_dir, ok):
                 except Exception as e:
                     out["pdf_ar_field_" + variant] = {"err": "%s: %s" % (type(e).__name__, e)}
                 print("[engine] pdf_ar_field", variant, json.dumps(out["pdf_ar_field_" + variant], ensure_ascii=False)[:1500], flush=True)
+            # (18 Nov 2026) record only, last: nothing above depends on it
+            try:
+                out["pdf_comment_date"] = await case_pdf_comment_date(s, app, evid, out)
+            except Exception as e:
+                out["pdf_comment_date"] = {"err": "%s: %s" % (type(e).__name__, e)}
+            print("[engine] pdf_comment_date", json.dumps(out["pdf_comment_date"], ensure_ascii=False)[:2000], flush=True)
     finally:
         json.dump(out, open(os.path.join(evid, "engine-%s.json" % arch), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         try:

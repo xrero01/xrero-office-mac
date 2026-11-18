@@ -7,7 +7,7 @@ on:
     inputs:
       version:
         description: Xrero Office version
-        default: "20.0.9"
+        default: "21.0"
       from:
         description: build-mac release tag holding XreroOffice-<version>-mac-<arch>-signed-app.zip
         required: true

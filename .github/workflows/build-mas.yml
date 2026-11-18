@@ -20,8 +20,8 @@ jobs:
     runs-on: macos-15          # macos-14 runners are retired on GitHub ("not supported", 16 Nov 2026)
     timeout-minutes: 120
     env:
-      V: "20.2"
-      PAYLOAD: "payload-20.0.9"
+      V: "21.0"
+      PAYLOAD: "payload-21.0"   # editors from the Windows 21.0 round-5 MSIX (scripts/make_payload.py)
       TEAM_ID: "Y5U46S55X5"      # Apple team (Developer ID certificate subject); checked against the API in the signing step
       GH_TOKEN: ${{ github.token }}
       UPLOAD: ${{ github.event_name == 'push' || inputs.upload }}
@@ -151,6 +151,6 @@ jobs:
           ditto -c -k --keepParent logs "mas-logs-${BUILD:-x}.zip" || true
           ditto -c -k --keepParent test "mas-test-evidence-${BUILD:-x}.zip" || true
           TAG="mas-$V-r${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" --prerelease --title "Xrero Office $V Mac App Store build ${BUILD:-?} (run ${GITHUB_RUN_NUMBER}, sandbox test: ${{ steps.sandbox_test.outcome }})" \
+          gh release create "$TAG" --prerelease --target "$GITHUB_SHA" --title "Xrero Office $V Mac App Store build ${BUILD:-?} (run ${GITHUB_RUN_NUMBER}, sandbox test: ${{ steps.sandbox_test.outcome }})" \
             --notes "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             -R "$GITHUB_REPOSITORY" $(ls mas-logs-*.zip mas-test-evidence-*.zip 2>/dev/null) || true

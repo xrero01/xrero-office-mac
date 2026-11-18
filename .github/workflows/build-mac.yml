@@ -19,6 +19,10 @@ on:
         description: "test + store pictures only: ad-hoc arm64, NO Developer ID signing / notarization / release, NO account on xrero.com; evidence = run artifact"
         type: boolean
         default: false
+      create_test_account:
+        description: "ui_test makes (and deletes) a REAL test account on xrero.com; off = the account wall + a made-up sign-in are checked, then a local signed-in state (no account on xrero.com)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -78,10 +82,13 @@ jobs:
       - name: Test arm64 - real app (first launch, start page, open, type EN/AR, bold, Cmd+S)
         env:
           XR_NO_SIGNUP: ${{ inputs.test_only && '1' || '' }}
+          XR_UI_TEST_CREATE_ACCOUNT: ${{ inputs.create_test_account && '1' || '' }}
         run: python3 scripts/ui_test.py "/Applications/Xrero Office.app" arm64 test out/test
 
       - name: Test x86_64 under Rosetta - install from DMG, converter + real app
         if: ${{ inputs.intel && !inputs.test_only }}
+        env:
+          XR_UI_TEST_CREATE_ACCOUNT: ${{ inputs.create_test_account && '1' || '' }}
         run: |
           bash scripts/install_from_dmg.sh "out/XreroOffice-$V-mac-x86_64.dmg"
           python3 scripts/test_converter.py "/Applications/Xrero Office.app" x86_64 test out/test
@@ -142,4 +149,5 @@ jobs:
           TAG="mac-$V-r${GITHUB_RUN_NUMBER}"
           STATE="notarized"; ls *.notary-pending >/dev/null 2>&1 && STATE="signed, notarization PENDING - not for the website until finalize-mac.yml"
           [ -n "${SIGN_ID:-}" ] || STATE="ad-hoc signed"
-          gh release create "$TAG" --prerelease --title "Xrero Office $V for macOS (build ${GITHUB_RUN_NUMBER}, $STATE)"             --notes "Built from official ONLYOFFICE 9.4.0 + Xrero payload. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"             -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 *-signed-app.zip *.notary-pending *.notary-id */*.notary-id "test-evidence-$V.zip" 2>/dev/null)
+          # --target: the tag points at the commit this run built (without it GitHub tags the default branch's head)
+          gh release create "$TAG" --prerelease --target "$GITHUB_SHA" --title "Xrero Office $V for macOS (build ${GITHUB_RUN_NUMBER}, $STATE)"             --notes "Built from official ONLYOFFICE 9.4.0 + Xrero payload. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"             -R "$GITHUB_REPOSITORY" $(ls *.dmg *.sha256 *-signed-app.zip *.notary-pending *.notary-id */*.notary-id "test-evidence-$V.zip" 2>/dev/null)

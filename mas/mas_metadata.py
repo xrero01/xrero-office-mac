@@ -1,15 +1,31 @@
 #!/usr/bin/env python3
 """mas_metadata.py - fills the macOS App Store version of Xrero Office (App Store Connect API key from the secrets):
-store text (en-US, ar-SA) based on the iOS version with Mac wording, Mac screenshots (APP_DESKTOP, mas/store/*.png),
-App Review contact + Mac notes, and the newest processed macOS build. It does NOT submit for review.
-Env: ASC_KEY, ASC_KEY_ID, ASC_ISSUER."""
+store text (en-US, ar-SA: description, promotional text, keywords, What's New, URLs), Mac screenshots (APP_DESKTOP,
+mas/store/*.png), App Review contact + Mac notes (the demo account entry is kept as it is), release type AFTER_APPROVAL,
+and the newest processed macOS build OF THIS VERSION. It does NOT submit for review.
+21.0 (18 Nov 2026): decision D - no open-source / AGPL / source-code wording and no offline or no-account claim in the
+store text; everything is pinned here (nothing is copied from the iOS version any more).
+Env: ASC_KEY, ASC_KEY_ID, ASC_ISSUER; V = the macOS version to fill (default VERSION below)."""
 import hashlib, json, os, sys, time, urllib.error, urllib.request
 
 import jwt
 
 APP_ID = "6819063639"
+VERSION = os.environ.get("V") or "21.0"
 API = "https://api.appstoreconnect.apple.com"
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# What's New in 21.0 (18 Nov 2026): only what changed on the Mac since 20.2 - the editors now come from Windows 21.0
+# (payload-21.0; diff vs payload-20.0.9 in the payload-21.0 release). Not listed because 20.2 already had them on the
+# Mac: Arabic in PDF form fields saved shaped, first form input kept, check box ticked with Enter, ar-AE in slides.
+WHATS_NEW_EN = """What's new in Xrero Office 21.0:
+- Fixed: comments saved in a PDF were dated 1969. They now keep the date they were added.
+- Fixed: an editor could sometimes fail to open.
+- Arabic interface: hundreds more labels are now in Arabic, and some were reworded."""
+WHATS_NEW_AR = """الجديد في إكسريرو أوفيس 21.0:
+- إصلاح تاريخ التعليقات في ملفات PDF: كانت تُحفظ بتاريخ 1969، وأصبحت تحتفظ بتاريخ إضافتها.
+- إصلاح مشكلة كانت تمنع أحد المحررات من الفتح أحيانًا.
+- الواجهة العربية: تعريب مئات التسميات الإضافية وتحسين صياغة بعضها."""
 
 TEXT = {
     "en-US": {
@@ -31,14 +47,18 @@ A FULL EDITOR, NOT A VIEWER
 - Tabs: several documents open in one window
 
 PRIVATE BY DESIGN
-- Your files stay on your Mac - a free Xrero account, no tracking
-- Works without an internet connection after the first sign-in
+- Your files stay on your Mac, with no tracking
+- Sign in with a free Xrero account
 
-Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""",
+Xrero Office is based on ONLYOFFICE Desktop Editors.""",
         "promotionalText": "Free and Arabic-first: Documents, Spreadsheets, Presentations and PDF in one app. Open, edit and save Office files on your Mac.",
+        "keywords": "docx,xlsx,pptx,office,arabic,editor,documents,spreadsheet,presentation,pdf,rtl,writer",
+        "whatsNew": WHATS_NEW_EN,
+        "supportUrl": "https://xrero.com/office/support",
+        "marketingUrl": "https://xrero.com/office",
     },
     "ar-SA": {
-        "description": """أوفيس Xrero حزمة مكتبية مجانية للمستندات والجداول والعروض التقديمية، مصممة للعربية أولاً، والتحرير يتم على جهاز Mac نفسه.
+        "description": """إكسريرو أوفيس حزمة مكتبية مجانية للمستندات والجداول والعروض التقديمية، مصممة للعربية أولاً، والتحرير يتم على جهاز Mac نفسه.
 
 افتح ملفاتك وعدّلها
 - المستندات (.docx) والجداول (.xlsx) والعروض التقديمية (.pptx)، وعرض ملفات PDF وتعبئة نماذجها والتعليق عليها
@@ -56,11 +76,15 @@ Xrero Office is free and open-source software (AGPL-3.0), based on ONLYOFFICE.""
 - تبويبات: عدة مستندات مفتوحة في نافذة واحدة
 
 الخصوصية أولاً
-- ملفاتك تبقى على جهازك: حساب Xrero مجاني وبلا تتبّع
-- يعمل دون اتصال بالإنترنت بعد أول تسجيل دخول
+- ملفاتك تبقى على جهازك، وبلا تتبّع
+- سجّل الدخول بحساب Xrero مجاني
 
-أوفيس Xrero برنامج مجاني ومفتوح المصدر (AGPL-3.0) مبني على ONLYOFFICE.""",
+إكسريرو أوفيس مبني على ONLYOFFICE Desktop Editors.""",
         "promotionalText": "مجاني ومصمم للعربية أولاً: المستندات والجداول والعروض وملفات PDF في تطبيق واحد. افتح ملفات أوفيس وعدّلها واحفظها على جهاز Mac.",
+        "keywords": "docx,xlsx,pptx,pdf,أوفيس,مستندات,جداول,عروض,محرر,عربي,مكتب",
+        "whatsNew": WHATS_NEW_AR,
+        "supportUrl": "https://xrero.com/office/support",
+        "marketingUrl": "https://xrero.com/office",
     },
 }
 # the listing's order (16 Nov 2026 review): the Arabic + English document first (the app's point, and the picture search
@@ -73,7 +97,7 @@ SHOTS = {"en-US": ["mac_en_editor.png", "mac_en_sheet.png", "mac_en_slides.png",
 NOTES = """XRERO OFFICE FOR MAC - APP REVIEW INFORMATION
 
 PURPOSE AND AUDIENCE
-Xrero Office is a free, open-source office suite (documents, spreadsheets, presentations) for Mac, iPhone and iPad. It is made for Arabic-speaking users, mainly in the United Arab Emirates and the Gulf, and for anyone who needs to open, edit and save Microsoft Office files (.docx, .xlsx, .pptx) with correct right-to-left Arabic. A free Xrero account is required (the same account as Xrero Office for Windows and iPhone); no subscription, no in-app purchases.
+Xrero Office is a free office suite (documents, spreadsheets, presentations) for Mac, iPhone and iPad. It is made for Arabic-speaking users, mainly in the United Arab Emirates and the Gulf, and for anyone who needs to open, edit and save Microsoft Office files (.docx, .xlsx, .pptx) with correct right-to-left Arabic. A free Xrero account is required (the same account as Xrero Office for Windows and iPhone); no subscription, no in-app purchases.
 
 SIGN-IN (demo account in the App Review fields)
 1. Launch the app: the Xrero account card opens. Sign in with the demo account, or create a new account in the app (Create account tab: name, email, password).
@@ -116,26 +140,31 @@ def call(method, path, body=None):
         raise SystemExit("ASC %s %s -> %s %s" % (method, path, e.code, e.read().decode(errors="replace")[:1500]))
 
 
+EDITABLE = ("PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY")
+
+
 def versions():
-    vs = call("GET", "/v1/apps/%s/appStoreVersions?limit=20" % APP_ID)["data"]
-    mac = [v for v in vs if v["attributes"]["platform"] == "MAC_OS"]
-    ios = [v for v in vs if v["attributes"]["platform"] == "IOS"]
+    """(macOS version VERSION, the newest macOS version before it) - the one to fill must still be editable"""
+    vs = [v for v in call("GET", "/v1/apps/%s/appStoreVersions?filter[platform]=MAC_OS&limit=20" % APP_ID)["data"]
+          if v["attributes"]["platform"] == "MAC_OS"]
+    mac = [v for v in vs if v["attributes"]["versionString"] == VERSION]
     if not mac:
-        raise SystemExit("no macOS version - run build-mas first")
-    return mac[0], ios[0]
+        raise SystemExit("no macOS version %s - run build-mas first (asc_mas.py macos-version makes it)" % VERSION)
+    mac = mac[0]
+    if mac["attributes"]["appStoreState"] not in EDITABLE:
+        raise SystemExit("macOS %s is %s - not editable, nothing changed" % (VERSION, mac["attributes"]["appStoreState"]))
+    prev = sorted([v for v in vs if v["id"] != mac["id"]], key=lambda v: v["attributes"].get("createdDate") or "")
+    return mac, (prev[-1] if prev else None)
 
 
-def localizations(mac, ios):
-    src = {l["attributes"]["locale"]: l["attributes"] for l in
-           call("GET", "/v1/appStoreVersions/%s/appStoreVersionLocalizations" % ios["id"])["data"]}
+def localizations(mac):
     have = {l["attributes"]["locale"]: l for l in
             call("GET", "/v1/appStoreVersions/%s/appStoreVersionLocalizations" % mac["id"])["data"]}
     out = {}
     for loc, t in TEXT.items():
-        a = {"description": t["description"], "promotionalText": t["promotionalText"],
-             "keywords": src.get(loc, {}).get("keywords"), "supportUrl": src.get(loc, {}).get("supportUrl"),
-             "marketingUrl": src.get(loc, {}).get("marketingUrl")}
-        a = {k: v for k, v in a.items() if v}
+        a = {k: t[k] for k in ("description", "promotionalText", "keywords", "whatsNew", "supportUrl", "marketingUrl")}
+        if len(a["keywords"]) > 100 or len(a["whatsNew"]) > 4000 or len(a["promotionalText"]) > 170:
+            raise SystemExit("%s: a field is over its App Store limit" % loc)
         if loc in have:
             r = call("PATCH", "/v1/appStoreVersionLocalizations/%s" % have[loc]["id"],
                      {"data": {"type": "appStoreVersionLocalizations", "id": have[loc]["id"], "attributes": a}})
@@ -144,7 +173,8 @@ def localizations(mac, ios):
             r = call("POST", "/v1/appStoreVersionLocalizations", {"data": {"type": "appStoreVersionLocalizations",
                      "attributes": a, "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": mac["id"]}}}}})
         out[loc] = r["data"]["id"]
-        print("text", loc, "ok (description %d chars)" % len(t["description"]))
+        print("text", loc, "ok (description %d, What's New %d, keywords %d chars)"
+              % (len(t["description"]), len(t["whatsNew"]), len(t["keywords"])))
     return out
 
 
@@ -175,15 +205,30 @@ def screenshots(locs):
             print("screenshot", loc, name, "uploaded")
 
 
-def review(mac, ios):
-    src = call("GET", "/v1/appStoreVersions/%s/appStoreReviewDetail" % ios["id"])["data"]["attributes"]
-    a = {k: src.get(k) for k in ("contactFirstName", "contactLastName", "contactPhone", "contactEmail") if src.get(k)}
-    # 20.2: the account is required - the demo account name + password are set in App Store Connect (never in this repo)
-    a.update({"demoAccountRequired": True, "notes": NOTES})
+def review_detail(version_id):
     try:
-        cur = call("GET", "/v1/appStoreVersions/%s/appStoreReviewDetail" % mac["id"])["data"]
+        return call("GET", "/v1/appStoreVersions/%s/appStoreReviewDetail" % version_id)["data"]
     except SystemExit:
-        cur = None
+        return None
+
+
+def review(mac, prev):
+    cur = review_detail(mac["id"])
+    old = review_detail(prev["id"]) if prev else None
+    src = (old or {}).get("attributes", {})
+    a = {k: src.get(k) for k in ("contactFirstName", "contactLastName", "contactPhone", "contactEmail") if src.get(k)}
+    # the account is required - the demo account (name + password) lives only in App Store Connect, never in this repo.
+    # A version made through the API can start without it: then the previous macOS version's own entry is carried over
+    # unchanged (never printed, never changed). An entry the new version already has is left as it is.
+    a.update({"demoAccountRequired": True, "notes": NOTES})
+    ca = (cur or {}).get("attributes", {})
+    if ca.get("demoAccountName") and ca.get("demoAccountPassword"):
+        print("demo account: already set on macOS %s (kept)" % VERSION)
+    elif src.get("demoAccountName") and src.get("demoAccountPassword"):
+        a["demoAccountName"], a["demoAccountPassword"] = src["demoAccountName"], src["demoAccountPassword"]
+        print("demo account: carried over unchanged from macOS %s" % prev["attributes"]["versionString"])
+    else:
+        print("WARNING: no demo account entry found - App Review needs one before submission")
     if cur:
         call("PATCH", "/v1/appStoreReviewDetails/%s" % cur["id"], {"data": {"type": "appStoreReviewDetails", "id": cur["id"], "attributes": a}})
     else:
@@ -192,13 +237,22 @@ def review(mac, ios):
     print("review details ok (notes %d chars)" % len(NOTES))
 
 
+def release_type(mac):
+    """automatic release once Apple approves it (PM decision for 21.0)"""
+    call("PATCH", "/v1/appStoreVersions/%s" % mac["id"], {"data": {"type": "appStoreVersions", "id": mac["id"],
+         "attributes": {"releaseType": "AFTER_APPROVAL"}}})
+    print("release type: AFTER_APPROVAL")
+
+
 def build(mac, wait_min=60):
+    """the newest macOS build uploaded for THIS version (preReleaseVersion = VERSION), once Apple has processed it"""
     for i in range(wait_min * 2):
-        bs = call("GET", "/v1/builds?filter[app]=%s&filter[preReleaseVersion.platform]=MAC_OS&sort=-uploadedDate&limit=5" % APP_ID)["data"]
+        bs = call("GET", "/v1/builds?filter[app]=%s&filter[preReleaseVersion.platform]=MAC_OS&filter[preReleaseVersion.version]=%s"
+                  "&sort=-uploadedDate&limit=5" % (APP_ID, VERSION))["data"]
         if bs:
             b = bs[0]
             st = b["attributes"]["processingState"]
-            print("newest macOS build", b["attributes"]["version"], st, flush=True)
+            print("newest macOS %s build" % VERSION, b["attributes"]["version"], st, flush=True)
             if st == "VALID":
                 call("PATCH", "/v1/appStoreVersions/%s/relationships/build" % mac["id"], {"data": {"type": "builds", "id": b["id"]}})
                 print("build", b["attributes"]["version"], "attached to macOS", mac["attributes"]["versionString"])
@@ -206,14 +260,16 @@ def build(mac, wait_min=60):
             if st in ("FAILED", "INVALID"):
                 raise SystemExit("build processing " + st)
         time.sleep(30)
-    raise SystemExit("no processed macOS build after %d minutes" % wait_min)
+    raise SystemExit("no processed macOS %s build after %d minutes" % (VERSION, wait_min))
 
 
 if __name__ == "__main__":
-    mac, ios = versions()
-    print("macOS version", mac["attributes"]["versionString"], mac["attributes"]["appStoreState"])
-    locs = localizations(mac, ios)
+    mac, prev = versions()
+    print("macOS version", mac["attributes"]["versionString"], mac["attributes"]["appStoreState"],
+          "| previous:", prev["attributes"]["versionString"] if prev else None)
+    locs = localizations(mac)
     screenshots(locs)
-    review(mac, ios)
+    review(mac, prev)
+    release_type(mac)
     build(mac)
     print("DONE - not submitted for review")

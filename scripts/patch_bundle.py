@@ -270,7 +270,7 @@ def nib_hide_outlets(b, outlets):
     return (nib_write(n), hits) if hits else None
 
 
-hide_hits = 0
+hide_hits, hide_nibs = 0, 0
 for nib in nibs:
     b = open(nib, "rb").read()
     if b"downloadBackgroundView" not in b:
@@ -278,6 +278,9 @@ for nib in nibs:
     r = nib_hide_outlets(b, ("downloadBackgroundView",))
     if not r:
         continue
+    if r[1] != 1:
+        raise SystemExit("title bar download box: %d found in %s" % (r[1], os.path.relpath(nib, RES)))
+    hide_nibs += 1
     nb = r[0]
     # (NIBArchive strings: a varint length, 0x80 | n for n < 128, then the bytes)
     for old, new in ((b"\x91icon-login_normal", b"\x91xr-noaccount-norm"), (b"\x90icon-login_hover", b"\x90xr-noaccount-hov")):
@@ -288,8 +291,11 @@ for nib in nibs:
     hide_hits += r[1]
     log("title bar: download box archived hidden, account button pictures transparent:", os.path.relpath(nib, RES),
         len(b), "->", len(nb), "bytes")
-if hide_hits != 1:
-    raise SystemExit("title bar download box: %d found in the storyboard" % hide_hits)
+# (18 Nov 2026) one per storyboard nib: the arm64 bundle has one (9zi-Wa-ufJ-view-Imu-er-1JF.nib); the x86_64 bundle has
+# that nib as a folder with one variant per macOS release (keyedobjects-101300 / -101400 / -110000.nib) - each variant
+# carries the same title bar, so each must have its download box hidden (build-mac run 45 stopped here: 3 != 1)
+if hide_nibs == 0 or hide_hits != hide_nibs:
+    raise SystemExit("title bar download box: %d found in %d storyboard nibs" % (hide_hits, hide_nibs))
 
 
 def blank_png(w, h):

@@ -94,15 +94,28 @@ def signing(out):
     print("profile", a["name"], a["profileType"], a["profileState"], "expires", a["expirationDate"])
 
 
+EDITABLE = ("PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY")
+
+
 def macos_version(ver):
     vs = call("GET", "/v1/apps/%s/appStoreVersions?filter[platform]=MAC_OS&limit=10" % APP_ID).get("data", [])
-    if vs:
-        for v in vs:
-            print("macOS version:", v["attributes"]["versionString"], v["attributes"]["appStoreState"])
+    for v in vs:
+        print("macOS version:", v["attributes"]["versionString"], v["attributes"]["appStoreState"])
+    # (18 Nov 2026) the next version (21.0): made here when the app has no macOS version of that number yet and no
+    # other one is still being prepared (only one can be); never submitted here
+    if any(v["attributes"]["versionString"] == ver for v in vs):
         return
-    r = call("POST", "/v1/appStoreVersions", {"data": {"type": "appStoreVersions",
-        "attributes": {"platform": "MAC_OS", "versionString": ver, "releaseType": "AFTER_APPROVAL"},
-        "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
+    open_ = [v for v in vs if v["attributes"]["appStoreState"] in EDITABLE]
+    if open_:
+        print("NOTE: macOS %s is still being prepared - no %s version made" % (open_[0]["attributes"]["versionString"], ver))
+        return
+    try:            # the upload does not need it: a refusal here is reported and the build is still uploaded
+        r = call("POST", "/v1/appStoreVersions", {"data": {"type": "appStoreVersions",
+            "attributes": {"platform": "MAC_OS", "versionString": ver, "releaseType": "AFTER_APPROVAL"},
+            "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
+    except SystemExit as e:
+        print("NOTE: macOS version %s not made: %s" % (ver, e))
+        return
     print("created macOS version", r["data"]["attributes"]["versionString"], r["data"]["attributes"]["appStoreState"])
 
 
